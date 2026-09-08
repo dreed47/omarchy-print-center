@@ -1,0 +1,19 @@
+{
+  "name": "omarchy-print-center",
+  "version": "0.1.0",
+  "description": "Manage CUPS printers and the print queue from the Omarchy bar. Omarchy shell plugin.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "validate": "node scripts/validate-manifest.mjs",
+    "check": "node --check printLogic.mjs && node --check lib/io.mjs && node --check bin/print-center && node scripts/validate-manifest.mjs && node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dreed47/omarchy-print-center.git"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

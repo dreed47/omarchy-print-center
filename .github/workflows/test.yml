@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["master", "main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install
+        run: npm install --ignore-scripts
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Sources parse
+        run: |
+          node --check printLogic.mjs
+          node --check lib/io.mjs
+          node --check bin/print-center
+
+      - name: CLI --help works
+        run: node bin/print-center --help
+
+      - name: Validate manifest.json
+        run: node scripts/validate-manifest.mjs

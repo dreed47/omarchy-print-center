@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+// print-center - the single engine behind the Print Center Omarchy plugin.
+// The bar widget's Service.qml and Panel.qml both shell out to this; nothing
+// CUPS-related is done directly from QML. Pure parsing lives in
+// ../printLogic.mjs, system calls in ../lib/io.mjs.
+
+import {
+    parseArgs, HELP, COMMANDS,
+    parsePrinterNames, parseDefaultPrinter, schedulerRunning,
+    parsePrinterOptions, printerCard,
+    assembleJobs, parseCompletedJobs,
+    worstSeverity, summaryLine,
+    assembleDiscovered, buildAddScript, sanitizeQueueName,
+    printerAlerts,
+} from "../printLogic.mjs"
+
+import * as io from "../lib/io.mjs"
+
+function die(msg, code = 1) {
+    process.stderr.write("print-center: " + msg + "\n")
+    process.exit(code)
+}
+function outJson(v) { process.stdout.write(JSON.stringify(v) + "\n") }
+
+// ---- data gathering -------------------------------------------------
+
+async function collectPrinters(defaultName) {
+    const names = parsePrinterNames(await io.lpstatE())
+    const cards = []
+    for (const n of names) {
+        const opts = parsePrinterOptions(await io.lpoptionsP(n))
+        cards.push(printerCard(n, opts, defaultName))
+    }
+    return cards
+}
+
+async function collectJobs() {
+    const [plain, long, lpq] = await Promise.all([
+        io.lpstatJobs(), io.lpstatJobsLong(), io.lpqAll(),
+    ])
+    return assembleJobs(plain, long, lpq)
+}
+
+async function buildStatus() {
+    const [rOut, dOut] = await Promise.all([io.lpstatR(), io.lpstatD()])
+    const cupsUp = schedulerRunning(rOut)
+    const defaultPrinter = parseDefaultPrinter(dOut)
+    if (!cupsUp) {
+        return {
+            cupsUp: false, defaultPrinter, printers: [], jobs: [],
+            recentCompleted: [], activeJobs: 0, worstState: "error",
+            summary: "CUPS service is not running",
+        }
+    }
+    const [printers, jobs, completedRaw] = await Promise.all([
+        collectPrinters(defaultPrinter), collectJobs(), io.lpstatCompleted(),
+    ])
+    // attach a per-printer active job count + human-readable alerts
+    for (const p of printers) {
+        p.jobCount = jobs.filter((j) => j.printer === p.name).length
+        p.alerts = printerAlerts(p.stateReasons)
+    }
+    const recentCompleted = parseCompletedJobs(completedRaw).slice(0, 5)
+    return {
+        cupsUp: true,
+        defaultPrinter,
+        printers,
+        jobs,
+        recentCompleted,
+        activeJobs: jobs.filter((j) => j.state !== "held").length,
+        worstState: worstSeverity(printers, jobs),
+        summary: summaryLine(printers, jobs, defaultPrinter),
+    }
+}
+
+// ---- commands -----------------------------------------------------
+
+async function cmdStatus(a) {
+    const st = await buildStatus()
+    if (a.json) return outJson(st)
+    console.log(st.cupsUp ? "CUPS: running" : "CUPS: NOT running")
+    console.log("default: " + (st.defaultPrinter || "(none)"))
+    console.log("state: " + st.worstState + " - " + st.summary)
+    for (const p of st.printers) {
+        const ink = p.markers.length
+            ? "  ink " + p.markers.map((m) => m.level + "%").join("/")
+            : ""
+        console.log("  " + (p.isDefault ? "* " : "  ") + p.name + "  [" + p.state + "]"
+            + (p.stateReasons.length ? "  " + p.stateReasons.join(",") : "") + ink)
+    }
+    for (const j of st.jobs) {
+        console.log("  job " + j.idNum + "  " + (j.title || "(untitled)")
+            + "  " + j.printer + "  [" + j.state + "]")
+    }
+}
+
+async function cmdPrinters(a) {
+    const def = parseDefaultPrinter(await io.lpstatD())
+    const printers = await collectPrinters(def)
+    if (a.json) return outJson(printers)
+    for (const p of printers) {
+        console.log((p.isDefault ? "* " : "  ") + p.name + "  [" + p.state + "]  " + p.makeAndModel)
+    }
+}
+
+async function cmdJobs(a) {
+    let jobs = a.completed
+        ? parseCompletedJobs(await io.lpstatCompleted())
+        : await collectJobs()
+    if (a.printer) jobs = jobs.filter((j) => j.printer === a.printer)
+    if (a.json) return outJson(jobs)
+    if (!jobs.length) { console.log("(no jobs)"); return }
+    for (const j of jobs) {
+        console.log(j.idNum + "\t" + j.state + "\t" + j.printer + "\t" + (j.title || "(untitled)"))
+    }
+}
+
+async function cmdCancel(a) {
+    if (a.all) {
+        let jobs = await collectJobs()
+        if (a.printer) jobs = jobs.filter((j) => j.printer === a.printer)
+        if (!jobs.length) { console.log("nothing to cancel"); return }
+        let failed = 0
+        for (const j of jobs) {
+            const { code } = await io.cancelJob(j.id)
+            if (code !== 0) failed++
+        }
+        if (failed) die(failed + " job(s) could not be cancelled (not yours?)")
+        console.log("cancelled " + jobs.length + " job(s)")
+        return
+    }
+    const id = a.positionals[0]
+    if (!id) die("cancel: need a job id or --all")
+    const { code, stderr } = await io.cancelJob(id)
+    if (code !== 0) die("cancel failed: " + stderr.trim())
+    console.log("cancelled " + id)
+}
+
+async function cmdHold(a) {
+    const id = a.positionals[0]
+    if (!id) die("hold: need a job id")
+    const { code, stderr } = await io.holdJob(id)
+    if (code !== 0) die("hold failed: " + stderr.trim())
+    console.log("held " + id)
+}
+
+async function cmdRelease(a) {
+    const id = a.positionals[0]
+    if (!id) die("release: need a job id")
+    const { code, stderr } = await io.releaseJob(id)
+    if (code !== 0) die("release failed: " + stderr.trim())
+    console.log("released " + id)
+}
+
+async function cmdReprint(a) {
+    const id = a.positionals[0]
+    if (!id) die("reprint: need a job id")
+    const { code, stderr } = await io.restartJob(id)
+    if (code !== 0) die("reprint failed (job files may no longer be retained): " + stderr.trim())
+    console.log("restarted " + id)
+}
+
+async function cmdDefault(a) {
+    const name = a.positionals[0]
+    if (!name) die("default: need a printer name")
+    const names = parsePrinterNames(await io.lpstatE())
+    if (!names.includes(name)) die("no such printer: " + name)
+    const { code, stderr } = await io.setUserDefault(name)
+    if (code !== 0) die("could not set default: " + stderr.trim())
+    console.log("default is now " + name)
+}
+
+async function cmdTestpage(a) {
+    const name = a.positionals[0]
+    if (!name) die("testpage: need a printer name")
+    const { code, stdout, stderr } = await io.printTestPage(name)
+    if (code !== 0) die("test page failed: " + stderr.trim())
+    console.log((stdout || "submitted").trim())
+}
+
+async function cmdDiscover(a) {
+    const [dl, ipp, ipps] = await Promise.all([
+        io.driverlessList(),
+        io.avahiBrowse("_ipp._tcp"),
+        io.avahiBrowse("_ipps._tcp"),
+    ])
+    const configured = new Set(parsePrinterNames(await io.lpstatE()).map((s) => s.toLowerCase()))
+    let list = assembleDiscovered(dl, ipp, ipps)
+    list = list.map((d) => ({ ...d, alreadyAdded: configured.has(d.queue.toLowerCase()) }))
+    if (a.json) return outJson(list)
+    for (const d of list) {
+        console.log((d.alreadyAdded ? "[added] " : "        ") + d.display
+            + (d.model ? "  (" + d.model + ")" : "") + "  " + d.uri)
+    }
+}
+
+async function cmdAdd(a) {
+    if (!a.uri) die("add: --uri is required")
+    const name = a.name || null
+    if (!name) die("add: --name is required")
+    if (!sanitizeQueueName(name)) die("add: invalid queue name (letters, digits, . _ - only)")
+    let script
+    try {
+        script = buildAddScript({ name, uri: a.uri, location: a.location, info: name })
+    } catch (e) {
+        die(String(e.message || e))
+    }
+    const { code, stderr } = await io.pkexecAdd(script)
+    if (code !== 0) die("add failed: " + (stderr.trim() || "elevation cancelled or lpadmin error"))
+    console.log("added " + name)
+}
+
+// ---- dispatch ---------------------------------------------------
+
+async function main() {
+    let a
+    try {
+        a = parseArgs(process.argv.slice(2))
+    } catch (e) {
+        die(String(e.message || e))
+    }
+    if (a.help || a.cmd === "" || a.cmd === "help") { process.stdout.write(HELP); return }
+    if (a.cmd === "add") return cmdAdd(a)                 // not in COMMANDS: privileged
+    if (!COMMANDS.includes(a.cmd)) die("unknown command: " + a.cmd + " (try --help)")
+
+    switch (a.cmd) {
+        case "status": return cmdStatus(a)
+        case "printers": return cmdPrinters(a)
+        case "jobs": return cmdJobs(a)
+        case "cancel": return cmdCancel(a)
+        case "hold": return cmdHold(a)
+        case "release": return cmdRelease(a)
+        case "reprint": return cmdReprint(a)
+        case "default": return cmdDefault(a)
+        case "testpage": return cmdTestpage(a)
+        case "discover": return cmdDiscover(a)
+        case "open-settings": io.openSettings(); console.log("launched system-config-printer"); return
+    }
+}
+
+main().catch((e) => die(String((e && e.stack) || e), 1))

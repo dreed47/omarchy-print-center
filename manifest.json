@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.dreed47.print-center",
+  "name": "Print Center",
+  "version": "0.1.0",
+  "author": "David Reed",
+  "license": "MIT",
+  "description": "Manage CUPS printers and the print queue from your Omarchy bar. A pill shows the default printer's state and queue depth, turning accent or urgent when a printer needs paper, ink, or attention. The popup lists printers with ink levels; cancel, hold, or release jobs; set your default; print a test page; add a driverless network printer. A headless service notifies you when a job finishes, is held, or a printer errors. Uses only the CUPS tools Omarchy ships.",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Print Center",
+    "description": "The default printer's state and queue depth in the bar, going accent/urgent when a printer needs paper or ink. Popup: printer list with ink levels, cancel/hold/release jobs, set default, test page, add a network printer. Desktop notifications for finished, held, and errored jobs.",
+    "category": "System",
+    "aliases": [
+      "print",
+      "printer",
+      "printers",
+      "print center",
+      "cups",
+      "print queue",
+      "printing",
+      "scanner",
+      "ink",
+      "toner"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "pollSeconds": 20,
+      "notify": "on",
+      "notifyTypes": "done,error,held",
+      "notifyTimeoutSeconds": 0,
+      "trackedPrinter": "",
+      "showJobCount": "on",
+      "openOnClick": "off",
+      "debug": "off"
+    },
+    "schema": [
+      { "key": "pollSeconds", "type": "int", "label": "Queue check interval (seconds, minimum 5)" },
+      { "key": "notify", "type": "string", "label": "Desktop notifications: on or off" },
+      { "key": "notifyTypes", "type": "string", "label": "Notify for which events (comma list): done,error,held - or 'all'" },
+      { "key": "notifyTimeoutSeconds", "type": "int", "label": "Auto-dismiss notification after N seconds (0 = daemon default)" },
+      { "key": "trackedPrinter", "type": "string", "label": "Printer the bar pill tracks (blank = system default)" },
+      { "key": "showJobCount", "type": "string", "label": "Show the queued-job count in the bar pill: on or off" },
+      { "key": "openOnClick", "type": "string", "label": "Clicking an error notification opens printer settings: on or off" },
+      { "key": "debug", "type": "string", "label": "Log raw CLI output to the shell log: on or off" }
+    ]
+  }
+}

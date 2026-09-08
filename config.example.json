@@ -1,0 +1,10 @@
+{
+  "pollSeconds": 20,
+  "notify": true,
+  "notifyTypes": ["done", "error", "held"],
+  "notifyTimeoutSeconds": 0,
+  "trackedPrinter": "",
+  "showJobCount": true,
+  "openOnClick": false,
+  "debug": false
+}

@@ -534,6 +534,63 @@ export function buildAddScript({ name, uri, location, info }) {
     return parts.join(" ") + " && cupsenable " + shq(q) + " && cupsaccept " + shq(q)
 }
 
+// ---- release / update checking ------------------------------------
+
+// Compare two dotted versions. Returns true when `a` is strictly newer than
+// `b`. A trailing pre-release tag ("1.2.0-beta") sorts *before* the plain
+// release ("1.2.0").
+export function semverGt(a, b) {
+    const parse = (v) => {
+        const s = String(v || "").trim().replace(/^v/i, "")
+        const [core, pre = ""] = s.split("-", 2)
+        const nums = core.split(".").map((n) => parseInt(n, 10) || 0)
+        while (nums.length < 3) nums.push(0)
+        return { nums, pre }
+    }
+    const x = parse(a), y = parse(b)
+    for (let i = 0; i < 3; i++) {
+        if (x.nums[i] > y.nums[i]) return true
+        if (x.nums[i] < y.nums[i]) return false
+    }
+    // cores equal: no pre-release beats a pre-release; otherwise lexical
+    if (!x.pre && y.pre) return true
+    if (x.pre && !y.pre) return false
+    return x.pre > y.pre
+}
+
+// Shape a GitHub "releases/latest" JSON blob into what the UI needs.
+export function parseRelease(json) {
+    const j = json || {}
+    const tag = String(j.tag_name || "")
+    return {
+        tag,
+        version: tag.replace(/^v/i, ""),
+        url: String(j.html_url || ""),
+        notes: String(j.body || "").trim().slice(0, 600),
+        publishedAt: String(j.published_at || ""),
+    }
+}
+
+// "https://github.com/owner/repo(.git)" -> "owner/repo"
+export function repoSlug(url) {
+    const m = String(url || "").match(/github\.com[/:]([^/]+\/[^/.]+)(?:\.git)?/i)
+    return m ? m[1] : ""
+}
+
+export function buildUpdateInfo(currentVersion, release, installKind) {
+    const rel = release || {}
+    return {
+        current: String(currentVersion || ""),
+        latest: rel.version || "",
+        tag: rel.tag || "",
+        url: rel.url || "",
+        notes: rel.notes || "",
+        installKind: installKind || "unknown",   // git | symlink | copy | unknown
+        updateAvailable: !!rel.version && semverGt(rel.version, currentVersion),
+        canSelfUpdate: installKind === "git" && !!rel.version && semverGt(rel.version, currentVersion),
+    }
+}
+
 // ---- CLI arg parsing ------------------------------------------------
 
 export const COMMANDS = [
@@ -541,11 +598,13 @@ export const COMMANDS = [
     "default", "testpage", "reprint", "discover", "open-settings",
     "options", "set-option", "supplies",
     "scan-support", "scanners", "scan-caps", "scan",
+    "check-update", "self-update",
 ]
 
 const VALUE_FLAGS = new Set([
     "--printer", "--uri", "--name", "--location", "--info", "--option",
     "--device", "--mode", "--resolution", "--source", "--format", "--out",
+    "--plugin-dir", "--tag",
 ])
 const BOOL_FLAGS = new Set([
     "--json", "--completed", "--all", "--adf", "--check", "--install",
@@ -586,6 +645,9 @@ usage:
   print-center options   --printer NAME [--json]   default paper/duplex/…
   print-center set-option --printer NAME --option KEY=VALUE
   print-center supplies  --printer NAME [--json]    live ink/toner levels
+
+  print-center check-update [--json]          is a newer release out?
+  print-center self-update  [--json]          git-checkout the latest tag
 
   print-center scan-support [--json]          are SANE + img2pdf installed?
   print-center scanners  [--json]             scanners on the network / USB

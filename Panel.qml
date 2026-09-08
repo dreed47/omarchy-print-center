@@ -39,6 +39,10 @@ Panel {
   readonly property string summary: svc ? String(svc.summary || "") : ""
   readonly property int activeJobs: svc ? (svc.activeJobs || 0) : 0
 
+  readonly property var updateInfo: svc ? (svc.updateInfo || ({})) : ({})
+  readonly property string updateState: svc ? String(svc.updateState || "idle") : "idle"
+  readonly property string updateError: svc ? String(svc.updateError || "") : ""
+
   readonly property string printerGlyph: String.fromCharCode(0xf02f)
   readonly property string bullet: String.fromCharCode(0x2022)
 
@@ -131,10 +135,16 @@ Panel {
   }
 
   function refresh() {
-    if (svc) svc.pollSoon()
+    if (svc) { svc.pollSoon(); svc.checkUpdate() }
     if (root.showDiscover) root.runDiscover()
     if (root.tab === "scan") root.checkScanSupport()
   }
+  function whatsNew() {
+    if (root.updateInfo && root.updateInfo.url)
+      Quickshell.execDetached(["xdg-open", String(root.updateInfo.url)])
+  }
+  function doSelfUpdate() { if (svc) svc.selfUpdate() }
+  function restartShell() { Quickshell.execDetached(["omarchy", "restart", "shell"]) }
 
   onOpenedChanged: if (root.opened) root.refresh()
 
@@ -490,6 +500,82 @@ Panel {
                 anchors.margins: -Style.space(4)
                 cursorShape: Qt.PointingHandCursor
                 onClicked: root.selectTab(modelData.key)
+              }
+            }
+          }
+        }
+
+        // ---- update banner ---------------------------------
+        Rectangle {
+          visible: (root.updateInfo && root.updateInfo.updateAvailable === true) || root.updateState === "done"
+          width: parent.width
+          implicitHeight: upCol.implicitHeight + Style.space(16)
+          radius: Style.cornerRadius
+          color: Util.alpha(Color.accent, 0.12)
+          border.width: 1
+          border.color: Color.accent
+
+          Column {
+            id: upCol
+            x: Style.space(10); y: Style.space(8)
+            width: parent.width - Style.space(20)
+            spacing: Style.space(4)
+
+            Text {
+              width: parent.width
+              text: root.updateState === "done"
+                ? (String.fromCharCode(0xf021) + "  Updated — restart the shell to load it")
+                : (String.fromCharCode(0xf062) + "  Update available  "
+                   + (root.updateInfo.current || "") + "  " + String.fromCharCode(0x2192)
+                   + "  " + (root.updateInfo.latest || ""))
+              color: root.fg
+              font.family: root.mono
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              elide: Text.ElideRight
+            }
+
+            Text {
+              visible: root.updateState !== "done" && !root.updateInfo.canSelfUpdate
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.updateInfo.installKind === "symlink"
+                ? "Developer install — update it with git in your checkout."
+                : "Installed without git — reinstall from the release."
+              color: root.dim
+              font.family: root.mono
+              font.pixelSize: Style.font.caption - 2
+            }
+
+            Text {
+              visible: root.updateError !== "" && root.updateState !== "done"
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.updateError
+              color: root.urgent
+              font.family: root.mono
+              font.pixelSize: Style.font.caption - 2
+            }
+
+            Row {
+              spacing: Style.space(6)
+              topPadding: Style.space(2)
+
+              PcMiniButton {
+                visible: root.updateState !== "done"
+                label: "What's new"
+                onTapped: root.whatsNew()
+              }
+              PcMiniButton {
+                visible: root.updateState !== "done" && root.updateInfo.canSelfUpdate
+                label: root.updateState === "updating" ? "Updating…" : "Update"
+                enabled: root.updateState !== "updating"
+                onTapped: root.doSelfUpdate()
+              }
+              PcMiniButton {
+                visible: root.updateState === "done"
+                label: "Restart shell"
+                onTapped: root.restartShell()
               }
             }
           }

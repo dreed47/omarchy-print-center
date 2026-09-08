@@ -8,5 +8,7 @@
   "openOnClick": false,
   "scanDir": "~/Pictures/Scans",
   "scanFormat": "pdf",
+  "checkUpdates": true,
+  "updateCheckHours": 24,
   "debug": false
 }

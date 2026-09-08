@@ -13,6 +13,7 @@ import {
     worstSeverity, summaryLine,
     assembleDiscovered, buildAddScript, sanitizeQueueName,
     printerAlerts,
+    parseRelease, repoSlug, buildUpdateInfo, semverGt,
 } from "../printLogic.mjs"
 
 import {
@@ -24,7 +25,14 @@ import {
 
 import * as io from "../lib/io.mjs"
 
-import { join } from "node:path"
+import { readFileSync } from "node:fs"
+import { join, dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+
+const SELF_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+function readJson(p) { try { return JSON.parse(readFileSync(p, "utf8")) } catch { return {} } }
+const MANIFEST = readJson(join(SELF_DIR, "manifest.json"))
+const PKG = readJson(join(SELF_DIR, "package.json"))
 
 function die(msg, code = 1) {
     process.stderr.write("print-center: " + msg + "\n")
@@ -277,6 +285,66 @@ async function cmdSupplies(a) {
     for (const m of markers) console.log(m.name + ": " + m.level + "%")
 }
 
+// ---- update checking / self-update ----------------------------
+
+function updateSlug() {
+    return repoSlug((PKG.repository && PKG.repository.url) || "")
+        || "dreed47/omarchy-print-center"
+}
+
+function installedVersion(pluginDir) {
+    return readJson(join(pluginDir, "manifest.json")).version
+        || MANIFEST.version || PKG.version || "0.0.0"
+}
+
+function linkDir() {
+    const home = process.env.HOME || ""
+    return home ? join(home, ".config", "omarchy", "plugins") : ""
+}
+
+async function cmdCheckUpdate(a) {
+    const pluginDir = a["plugin-dir"] || SELF_DIR
+    const kind = io.detectInstallKind(pluginDir, linkDir())
+    const rel = parseRelease(await io.githubLatestRelease(updateSlug()))
+    const info = buildUpdateInfo(installedVersion(pluginDir),
+        rel.version ? rel : null, kind)
+    if (a.json) return outJson(info)
+    if (!rel.version) { console.log("could not reach GitHub"); return }
+    console.log("current " + info.current + "   latest " + info.latest
+        + (info.updateAvailable ? "   -> update available" : "   (up to date)"))
+    console.log("install: " + kind + (info.canSelfUpdate ? " (self-update ok)" : ""))
+}
+
+async function cmdSelfUpdate(a) {
+    const pluginDir = a["plugin-dir"] || SELF_DIR
+    const kind = io.detectInstallKind(pluginDir, linkDir())
+    if (kind === "symlink") die("this is a linked dev checkout - update it with git yourself")
+    if (kind !== "git") die("installed without git - reinstall from the latest release")
+    if (!(await io.gitWorkingTreeClean(pluginDir)))
+        die("the plugin directory has uncommitted changes - not touching it")
+
+    const fetch = await io.gitFetchTags(pluginDir)
+    if (fetch.code !== 0) die("git fetch failed: " + tailLines(fetch.stderr))
+
+    let tag = a.tag
+    if (!tag) {
+        const rel = parseRelease(await io.githubLatestRelease(updateSlug()))
+        tag = rel.tag || (await io.gitLatestTag(pluginDir))
+    }
+    if (!tag) die("could not determine the latest tag")
+
+    const cur = installedVersion(pluginDir)
+    if (!semverGt(tag.replace(/^v/i, ""), cur))
+        die("already on " + cur + " (latest tag " + tag + ")")
+
+    const co = await io.gitCheckoutTag(pluginDir, tag)
+    if (co.code !== 0) die("git checkout " + tag + " failed: " + tailLines(co.stderr))
+
+    const now = readJson(join(pluginDir, "manifest.json")).version || ""
+    outJson({ updated: true, version: now || tag.replace(/^v/i, ""), tag,
+        restartHint: "omarchy restart shell" })
+}
+
 // ---- scanning ---------------------------------------------------
 
 async function scanSupportInfo() {
@@ -441,6 +509,8 @@ async function main() {
         case "options": return cmdOptions(a)
         case "set-option": return cmdSetOption(a)
         case "supplies": return cmdSupplies(a)
+        case "check-update": return cmdCheckUpdate(a)
+        case "self-update": return cmdSelfUpdate(a)
         case "scan-support": return cmdScanSupport(a)
         case "scanners": return cmdScanners(a)
         case "scan-caps": return cmdScanCaps(a)

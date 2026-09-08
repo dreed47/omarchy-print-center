@@ -72,6 +72,8 @@ Item {
     openOnClick: isOn(pick("openOnClick", "off")),
     scanDir: String(pick("scanDir", "~/Pictures/Scans")),
     scanFormat: String(pick("scanFormat", "pdf")).toLowerCase(),
+    checkUpdates: isOn(pick("checkUpdates", "on")),
+    updateCheckHours: Math.max(1, parseInt(pick("updateCheckHours", 24), 10) || 24),
     debug: isOn(pick("debug", "off"))
   })
   function wants(type) {
@@ -119,6 +121,7 @@ Item {
     property string activeIdsJson: "[]"       // job ids seen active last poll
     property string heldIdsJson: "[]"         // job ids seen held last poll
     property string printerReasonsJson: "{}"  // { printerName: ["reason", ...] }
+    property string notifiedUpdateVersion: "" // release we've already nagged about
   }
   function jparse(s, dflt) { try { var v = JSON.parse(s); return v === null ? dflt : v } catch (e) { return dflt } }
 
@@ -265,14 +268,15 @@ Item {
 
   // ---- notification queue -----------------------------------
   property var notifyQueue: []
-  function notify(urgency, glyph, headline, body, isError) {
+  function notify(urgency, glyph, headline, body, isError, url) {
     if (!cfg.notify) return
     var cmd = ["omarchy-notification-send", "--app-name", "Print Center", "-u", urgency]
     if (glyph) { cmd.push("-g"); cmd.push(String(glyph)) }
     if (cfg.notifyTimeoutSeconds > 0) { cmd.push("-t"); cmd.push(String(cfg.notifyTimeoutSeconds * 1000)) }
     cmd.push(String(headline))
     if (body) cmd.push(String(body))
-    if (isError && cfg.openOnClick) { cmd.push("--exec"); cmd.push("system-config-printer") }
+    if (url && url !== "") { cmd.push("--exec"); cmd.push("xdg-open"); cmd.push(String(url)) }
+    else if (isError && cfg.openOnClick) { cmd.push("--exec"); cmd.push("system-config-printer") }
     notifyQueue.push(cmd)
     pumpNotify()
   }
@@ -300,6 +304,94 @@ Item {
     onTriggered: root.poll()
   }
 
+  // ---- update checking ------------------------------------
+  //
+  // Once a day (configurable) the CLI asks GitHub for the latest release and
+  // reports it back with how this plugin copy is installed. A newer version
+  // fires one notification per version; the popup shows a banner with an
+  // "Update" button when the install is a plain git checkout.
+  property var updateInfo: ({
+    current: "", latest: "", url: "", notes: "",
+    installKind: "unknown", updateAvailable: false, canSelfUpdate: false
+  })
+  property string updateState: "idle"    // idle | checking | updating | done | error
+  property string updateError: ""
+
+  function checkUpdate() {
+    if (!root.cfg.checkUpdates || updateProc.running || selfUpdateProc.running) return
+    root.updateState = "checking"
+    updateProc.command = ["node", root.cli, "check-update", "--plugin-dir", root.pluginDir, "--json"]
+    updateProc.running = true
+  }
+  Process {
+    id: updateProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.updateState = "idle"
+        try {
+          var info = JSON.parse(String(text).trim())
+          if (info && typeof info === "object") { root.updateInfo = info; root.maybeNotifyUpdate() }
+        } catch (e) { if (root.cfg.debug) console.log("[print-center] update parse", e) }
+      }
+    }
+  }
+
+  function maybeNotifyUpdate() {
+    var i = root.updateInfo
+    if (!i.updateAvailable) return
+    if (String(i.latest) === String(st.notifiedUpdateVersion)) return
+    st.notifiedUpdateVersion = String(i.latest)
+    notify("normal", "", "Print Center " + i.latest + " available",
+      i.canSelfUpdate ? "Open the popup to update"
+                      : "See what's new on GitHub", false, i.url)
+  }
+
+  function selfUpdate() {
+    if (selfUpdateProc.running || !root.updateInfo.canSelfUpdate) return
+    root.updateState = "updating"
+    root.updateError = ""
+    selfUpdateProc.command = ["node", root.cli, "self-update", "--plugin-dir", root.pluginDir, "--json"]
+    selfUpdateProc.running = true
+  }
+  Process {
+    id: selfUpdateProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var r = JSON.parse(String(text).trim())
+          if (r && r.updated) {
+            root.updateState = "done"
+            root.notify("normal", "", "Print Center updated to " + r.version,
+              "Run  omarchy restart shell  to load it", false, "")
+            Qt.callLater(root.checkUpdate)
+            return
+          }
+        } catch (e) {}
+        root.updateState = "error"
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var e = String(text).trim().replace(/^print-center:\s*/, "")
+        if (e !== "") root.updateError = e
+      }
+    }
+    onExited: function (code) {
+      if (code !== 0 && root.updateState !== "done") root.updateState = "error"
+    }
+  }
+
+  Timer {
+    interval: root.cfg.updateCheckHours * 3600 * 1000
+    running: root.cfg.checkUpdates
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.checkUpdate()
+  }
+
   // ---- IPC --------------------------------------------------
   IpcHandler {
     target: "print-center"
@@ -315,6 +407,8 @@ Item {
     function makeDefault(name: string): void { root.runAction(["default", name]) }
     function testPage(name: string): void { root.runAction(["testpage", name]) }
     function openSettings(): void { root.runAction(["open-settings"]) }
+    function checkUpdate(): void { Qt.callLater(root.checkUpdate) }
+    function selfUpdate(): void { root.selfUpdate() }
     function status(): string {
       return JSON.stringify({
         cliMissing: root.cliMissing,
@@ -326,7 +420,9 @@ Item {
         activeJobs: root.activeJobs,
         worstState: root.worstState,
         summary: root.summary,
-        lastPollMs: root.lastPollMs
+        lastPollMs: root.lastPollMs,
+        updateInfo: root.updateInfo,
+        updateState: root.updateState
       })
     }
   }

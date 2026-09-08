@@ -38,6 +38,12 @@ job finishes, a job is held (needs a password, filter failed), or a printer
 reports an error. The three event classes — `done`, `error`, `held` — are
 toggled independently.
 
+**Updates** — once a day (set `checkUpdates` / `updateCheckHours`) it checks
+GitHub for a newer release and shows a banner in the popup. If the plugin was
+installed as a plain `git` checkout, an **Update** button does
+`git fetch && git checkout <tag>` for you (only with a clean working tree),
+then asks you to restart the shell. Otherwise it just links to the release.
+
 **Scan tab** — finds SANE scanners (driverless eSCL / WSD via `sane-airscan`,
 plus USB), lets you pick mode / resolution / source, and scans to PDF, PNG or
 JPEG in `~/Pictures/Scans`. Multi-page and ADF batches become one PDF. Live
@@ -119,6 +125,8 @@ print-center open-settings
 print-center options   --printer NAME --json    default paper/duplex/…
 print-center set-option --printer NAME --option KEY=VALUE
 print-center supplies  --printer NAME --json    live ink/toner levels
+print-center check-update --json          is a newer release out?
+print-center self-update  --json          git-checkout the latest tag
 print-center scan-support --json          are SANE + img2pdf installed?
 print-center scanners  --json
 print-center scan-caps --device <id> --json

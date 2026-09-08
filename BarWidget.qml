@@ -82,6 +82,8 @@ BarWidget {
       return String(tracked.alerts[0].text || "")
     return ""
   }
+  readonly property bool updateAvailable:
+    root.svc && root.svc.updateInfo ? root.svc.updateInfo.updateAvailable === true : false
 
   WidgetButton {
     id: button
@@ -144,6 +146,17 @@ BarWidget {
         color: button.pillColor
         font.family: button.fontFamily
         font.pixelSize: button.fontSize
+        renderType: Text.NativeRendering
+      }
+
+      // Update-available marker (FA arrow-up), only when nothing louder shows.
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: root.updateAvailable && root.alertText === "" && root.cupsUp && !root.cliMissing
+        text: ""
+        color: button.accent
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize - 2
         renderType: Text.NativeRendering
       }
     }

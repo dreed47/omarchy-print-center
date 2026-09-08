@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] - 2026-09-08
+
+### Added
+
+- **Update checking** — once a day (configurable) the plugin asks GitHub for
+  the latest release. A newer version raises one notification and shows a
+  banner in the popup: `↑ Update available  0.3.0 → 0.4.0`.
+- **One-click update** — when the plugin is a plain `git` checkout, the
+  banner's **Update** button runs `git fetch --tags && git checkout <tag>`
+  (only if the working tree is clean), then prompts you to
+  `omarchy restart shell`. Linked dev checkouts and non-git copies are left
+  alone with a note instead.
+- New `print-center check-update` / `self-update` subcommands; settings
+  `checkUpdates`, `updateCheckHours`.
+
 ## [0.3.0] - 2026-09-08
 
 First public release.

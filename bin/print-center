@@ -6,8 +6,9 @@
 
 import {
     parseArgs, HELP, COMMANDS,
-    parsePrinterNames, parseDefaultPrinter, effectiveDefault, schedulerRunning,
+    parsePrinterNames, parseDeviceList, parseDefaultPrinter, effectiveDefault, schedulerRunning,
     parsePrinterOptions, printerCard,
+    parseLpoptionsL, shapePrinterOptions, parseIpptoolMarkers,
     assembleJobs, parseCompletedJobs,
     worstSeverity, summaryLine,
     assembleDiscovered, buildAddScript, sanitizeQueueName,
@@ -33,12 +34,19 @@ function outJson(v) { process.stdout.write(JSON.stringify(v) + "\n") }
 
 // ---- data gathering -------------------------------------------------
 
-async function collectPrinters(defaultName) {
+async function collectPrinters(defaultName, { withSupplies = true } = {}) {
     const names = parsePrinterNames(await io.lpstatV())
     const cards = []
     for (const n of names) {
         const opts = parsePrinterOptions(await io.lpoptionsP(n))
-        cards.push(printerCard(n, opts, defaultName))
+        const card = printerCard(n, opts, defaultName)
+        // A freshly-added queue often has no marker data until cupsd polls the
+        // device; ask the device directly in that case.
+        if (withSupplies && card.markers.length === 0 && card.uri) {
+            const live = parseIpptoolMarkers(await io.deviceMarkers(card.uri))
+            if (live.length) card.markers = live
+        }
+        cards.push(card)
     }
     return cards
 }
@@ -226,6 +234,49 @@ async function cmdAdd(a) {
     console.log("added " + name)
 }
 
+// ---- per-printer default options ------------------------------
+
+async function cmdOptions(a) {
+    const name = a.printer || a.positionals[0]
+    if (!name) die("options: --printer NAME is required")
+    if (!parsePrinterNames(await io.lpstatV()).includes(name)) die("no such printer: " + name)
+    const shaped = shapePrinterOptions(parseLpoptionsL(await io.lpoptionsListP(name)))
+    if (a.json) return outJson(shaped)
+    for (const o of shaped) {
+        console.log(o.label + ":  " + o.values.map((v) =>
+            (v.value === o.current ? "*" : "") + v.display).join("  "))
+    }
+}
+
+async function cmdSetOption(a) {
+    const name = a.printer
+    if (!name) die("set-option: --printer NAME is required")
+    if (!a.option || a.option.indexOf("=") === -1) die("set-option: --option KEY=VALUE is required")
+    const [k, ...rest] = a.option.split("=")
+    const v = rest.join("=")
+    if (!parsePrinterNames(await io.lpstatV()).includes(name)) die("no such printer: " + name)
+    const { code, stderr } = await io.setPrinterOption(name, k, v)
+    if (code !== 0) die("could not set " + k + ": " + stderr.trim())
+    const now = parseLpoptionsL(await io.lpoptionsListP(name)).find((r) => r.key === k)
+    if (now && now.current !== v)
+        die("lpoptions ran but " + k + " is still " + (now.current || "unset"))
+    console.log(k + " = " + v)
+}
+
+async function cmdSupplies(a) {
+    const name = a.printer || a.positionals[0]
+    if (!name) die("supplies: --printer NAME is required")
+    const devs = parseDeviceList(await io.lpstatV())
+    const dev = devs.find((d) => d.name === name)
+    if (!dev) die("no such printer: " + name)
+    let markers = parsePrinterOptions(await io.lpoptionsP(name))
+    markers = printerCard(name, markers, "").markers
+    if (!markers.length && dev.uri) markers = parseIpptoolMarkers(await io.deviceMarkers(dev.uri))
+    if (a.json) return outJson(markers)
+    if (!markers.length) { console.log("(no supply data)"); return }
+    for (const m of markers) console.log(m.name + ": " + m.level + "%")
+}
+
 // ---- scanning ---------------------------------------------------
 
 async function scanSupportInfo() {
@@ -387,6 +438,9 @@ async function main() {
         case "testpage": return cmdTestpage(a)
         case "discover": return cmdDiscover(a)
         case "open-settings": io.openSettings(); console.log("launched system-config-printer"); return
+        case "options": return cmdOptions(a)
+        case "set-option": return cmdSetOption(a)
+        case "supplies": return cmdSupplies(a)
         case "scan-support": return cmdScanSupport(a)
         case "scanners": return cmdScanners(a)
         case "scan-caps": return cmdScanCaps(a)

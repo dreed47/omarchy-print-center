@@ -1,6 +1,6 @@
 {
   "name": "omarchy-print-center",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Manage CUPS printers and the print queue from the Omarchy bar. Omarchy shell plugin.",
   "type": "module",
   "private": true,

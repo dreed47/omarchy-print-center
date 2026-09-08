@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-09-08
+
+Phase 3: polish.
+
+### Added
+
+- **Default print options** per printer — an **Options** expander on each
+  printer row with chips for paper size, tray, paper type, quality, colour
+  and two-sided. Saved per-user (`lpoptions -o`), no password. Backed by new
+  `print-center options` / `set-option`.
+- **Live ink / toner levels** for queues that carry no supply data yet
+  (e.g. a just-added one): the device is queried directly over IPP with
+  `ipptool`. New `print-center supplies`; also folded into `status` so the
+  dots just appear.
+
 ## [0.2.0] - 2026-09-08
 
 Phase 2: scanning (SANE).

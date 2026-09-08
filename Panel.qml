@@ -73,6 +73,57 @@ Panel {
   function makeDefault(name) { act(["default", name]) }
   function testPage(name) { act(["testpage", name]) }
   function openSettings() { if (svc) svc.runAction(["open-settings"]) }
+
+  // ---- per-printer default options ---------------------------
+  property string optionsOpen: ""        // printer name whose options are expanded
+  property var optionsFor: ({})          // { printerName: [shaped option rows] }
+  property string optionsPending: ""
+
+  function toggleOptions(name) {
+    root.optionsOpen = (root.optionsOpen === name) ? "" : name
+    if (root.optionsOpen === name && !root.optionsFor[name]) root.loadOptions(name)
+  }
+  function loadOptions(name) {
+    if (!svc || optionsProc.running) return
+    root.optionsPending = name
+    optionsProc.command = ["node", svc.cli, "options", "--printer", name, "--json"]
+    optionsProc.running = true
+  }
+  Process {
+    id: optionsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var name = root.optionsPending
+        try {
+          var rows = JSON.parse(String(text).trim()) || []
+          var m = Object.assign({}, root.optionsFor)
+          m[name] = rows
+          root.optionsFor = m
+        } catch (e) {}
+      }
+    }
+  }
+  function setOption(name, key, value) {
+    if (!svc) return
+    // optimistic: reflect the change immediately, then reload for real
+    var m = Object.assign({}, root.optionsFor)
+    if (m[name]) {
+      m[name] = m[name].map(function (r) {
+        return r.key === key ? Object.assign({}, r, { current: value }) : r
+      })
+      root.optionsFor = m
+    }
+    svc.runAction(["set-option", "--printer", name, "--option", key + "=" + value])
+    root.optionsReloadName = name
+    optionsReloadTimer.restart()
+  }
+  property string optionsReloadName: ""
+  Timer {
+    id: optionsReloadTimer
+    interval: 900
+    onTriggered: if (root.optionsReloadName !== "") root.loadOptions(root.optionsReloadName)
+  }
   function addPrinter(d) {
     var args = ["add", "--uri", String(d.uri), "--name", String(d.queue), "--info", String(d.display || d.queue)]
     if (d.location) args.push("--location", String(d.location))
@@ -324,6 +375,10 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh() }
     function scan(): void { root.selectTab("scan"); root.openFromHotkey() }
+    function options(name: string): void {
+      root.selectTab("printers"); root.openFromHotkey()
+      if (name) root.toggleOptions(name)
+    }
   }
 
   // ---- UI -------------------------------------------------
@@ -611,6 +666,38 @@ Panel {
                   PcMiniButton {
                     label: "Test page"
                     onTapped: root.testPage(modelData.name)
+                  }
+                  PcMiniButton {
+                    label: (root.optionsOpen === modelData.name ? "Options " + String.fromCharCode(0xf078)
+                                                               : "Options " + String.fromCharCode(0xf054))
+                    onTapped: root.toggleOptions(modelData.name)
+                  }
+                }
+
+                // default print options editor (paper / duplex / colour / …)
+                Column {
+                  visible: root.optionsOpen === modelData.name
+                  width: parent.width
+                  spacing: Style.space(5)
+                  topPadding: Style.space(4)
+
+                  Text {
+                    visible: !root.optionsFor[modelData.name]
+                    text: "loading options…"
+                    color: root.dim
+                    font.family: root.mono
+                    font.pixelSize: Style.font.caption - 1
+                  }
+                  Repeater {
+                    model: root.optionsFor[modelData.name] || []
+                    ScanRow {
+                      required property var modelData
+                      readonly property string printerName: root.optionsOpen
+                      label: modelData.label
+                      values: modelData.values
+                      current: modelData.current
+                      onPicked: function (v) { root.setOption(printerName, modelData.key, v) }
+                    }
                   }
                 }
               }
@@ -1150,24 +1237,29 @@ Panel {
     width: parent ? parent.width : 0
     spacing: Style.space(6)
     Text {
-      width: Style.space(44)
+      width: Style.space(52)
       text: sr.label
       color: root.dim
       font.family: root.mono
       font.pixelSize: Style.font.caption - 1
-      anchors.verticalCenter: parent.verticalCenter
+      elide: Text.ElideRight
+      anchors.top: parent.top
+      anchors.topMargin: Style.space(3)
     }
     Flow {
-      width: sr.width - Style.space(52)
+      width: sr.width - Style.space(60)
       spacing: Style.space(5)
       Repeater {
         model: sr.values
         ScanChip {
           required property var modelData
-          label: String(modelData)
-          on: String(sr.current) === String(modelData)
-          enabled: (sr.disabledValues || []).indexOf(String(modelData)) === -1
-          onTapped: sr.picked(modelData)
+          // Values are plain strings, or { value, display } objects.
+          readonly property var v: (modelData && typeof modelData === "object") ? modelData.value : modelData
+          readonly property string d: (modelData && typeof modelData === "object") ? String(modelData.display) : String(modelData)
+          label: d
+          on: String(sr.current) === String(v)
+          enabled: (sr.disabledValues || []).indexOf(String(v)) === -1
+          onTapped: sr.picked(v)
         }
       }
     }

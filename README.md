@@ -19,8 +19,11 @@ an error (out of paper, jam, offline) or when the CUPS service is down.
 **Popup**
 
 - **Printers** — each configured printer with its state, the default marker,
-  make and model, and ink / supply levels. Per printer: **Set default**
-  (per-user, no password) and **Test page**.
+  make and model, and ink / supply levels (read from CUPS, or straight from
+  the device over IPP when the queue has none yet). Per printer: **Set
+  default** (per-user, no password), **Test page**, and an **Options**
+  expander for the default paper size, tray, paper type, quality, colour and
+  two-sided setting (also per-user).
 - **Queue** — every active job with **Hold / Release** and **Cancel**, plus
   **Clear the whole queue** when there is more than one.
 - **Add a network printer** — scans the network with `driverless` and
@@ -97,6 +100,9 @@ print-center testpage  <printer>
 print-center discover  --json             network printers to add
 print-center add       --uri <ipp://…> --name <queue> [--location L]
 print-center open-settings
+print-center options   --printer NAME --json    default paper/duplex/…
+print-center set-option --printer NAME --option KEY=VALUE
+print-center supplies  --printer NAME --json    live ink/toner levels
 print-center scan-support --json          are SANE + img2pdf installed?
 print-center scanners  --json
 print-center scan-caps --device <id> --json

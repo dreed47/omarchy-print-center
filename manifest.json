@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.dreed47.print-center",
   "name": "Print Center",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "David Reed",
   "license": "MIT",
   "description": "Manage CUPS printers and the print queue from your Omarchy bar. A pill shows the default printer's state and queue depth, turning accent or urgent when a printer needs paper, ink, or attention. The popup lists printers with ink levels; cancel, hold, or release jobs; set your default; print a test page; add a driverless network printer. A headless service notifies you when a job finishes, is held, or a printer errors. A Scan tab drives SANE scanners (optional; installs its packages on request).",

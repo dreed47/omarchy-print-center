@@ -118,6 +118,30 @@ function zipMarkers(opts) {
         high: numOr(highs[k], 100),
     }))
 }
+
+// Same shape as zipMarkers, from a direct `ipptool -tv <uri> get-printer-
+// attributes.test` dump (used when the CUPS queue itself carries no supply
+// data yet - e.g. a just-added queue).
+export function parseIpptoolMarkers(ipptoolOut) {
+    const grab = (attr) => {
+        const m = String(ipptoolOut || "").match(
+            new RegExp("^\\s*" + attr + "\\s*\\([^)]*\\)\\s*=\\s*(.+)$", "m"))
+        return m ? m[1].trim() : ""
+    }
+    const names = grab("marker-names").split(",").map((s) => s.trim()).filter(Boolean)
+    if (!names.length) return []
+    const types = grab("marker-types").split(",")
+    const levels = grab("marker-levels").split(",")
+    const lows = grab("marker-low-levels").split(",")
+    const highs = grab("marker-high-levels").split(",")
+    return names.map((nm, k) => ({
+        name: nm.replace(/^["']|["']$/g, ""),
+        type: (types[k] || "").trim(),
+        level: numOr(levels[k], -1),
+        low: numOr(lows[k], -1),
+        high: numOr(highs[k], 100),
+    }))
+}
 function numOr(v, d) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d }
 
 // Build the per-printer card the bar pill and popup consume, from the name
@@ -141,6 +165,83 @@ export function printerCard(name, opts, defaultName) {
         makeAndModel: opts["printer-make-and-model"] || "",
         markers: zipMarkers(opts),
     }
+}
+
+// ---- per-printer default options (`lpoptions -p NAME -l`) -----------
+//
+//   PageSize/Media Size: A4 *Letter Legal Custom.WIDTHxHEIGHT
+//   Duplex/Duplex: *None DuplexNoTumble DuplexTumble
+// The value prefixed with '*' is the current default. `lpoptions -o KEY=VAL`
+// changes it (per-user, unprivileged).
+
+export function parseLpoptionsL(out) {
+    const rows = []
+    for (const line of String(out || "").split("\n")) {
+        const m = line.match(/^([A-Za-z0-9_.-]+)\/(.+?):\s+(.+)$/)
+        if (!m) continue
+        const values = m[3].trim().split(/\s+/)
+        let current = ""
+        const clean = values.map((v) => {
+            if (v.startsWith("*")) { current = v.slice(1); return v.slice(1) }
+            return v
+        })
+        rows.push({ key: m[1], label: m[2].trim(), values: clean, current })
+    }
+    return rows
+}
+
+// The handful of options worth surfacing, with friendly labels and, where the
+// raw list is huge or cryptic, a shortlist. Anything not in this map is hidden.
+const OPTION_LABELS = {
+    PageSize: "Paper",
+    ColorModel: "Color",
+    Duplex: "Sides",
+    sides: "Sides",
+    cupsPrintQuality: "Quality",
+    OutputMode: "Quality",
+    print_quality: "Quality",
+    Resolution: "DPI",
+    MediaType: "Type",
+    InputSlot: "Tray",
+}
+const PAGESIZE_SHORTLIST = ["Letter", "Legal", "A4", "A5", "A6", "B5", "Executive", "4x6", "5x7", "Env10", "EnvDL"]
+const MEDIATYPE_SHORTLIST = ["Auto", "Stationery", "Plain", "Photographic", "Envelope", "Bond", "Recycled"]
+const DUPLEX_DISPLAY = {
+    None: "Off", DuplexNoTumble: "Long edge", DuplexTumble: "Short edge",
+    "one-sided": "Off", "two-sided-long-edge": "Long edge", "two-sided-short-edge": "Short edge",
+}
+
+export function displayOptionValue(key, value) {
+    if ((key === "Duplex" || key === "sides") && DUPLEX_DISPLAY[value]) return DUPLEX_DISPLAY[value]
+    return String(value).replace(/^Com\.canon/i, "").replace(/^[a-z]+\./i, "")
+}
+
+export function shapePrinterOptions(parsed) {
+    const out = []
+    for (const row of parsed || []) {
+        const label = OPTION_LABELS[row.key]
+        if (!label) continue
+        let values = row.values.filter((v) => !/WIDTHxHEIGHT|Custom\./i.test(v))
+        if (row.key === "PageSize") {
+            const keep = PAGESIZE_SHORTLIST.filter((v) => values.includes(v))
+            if (row.current && !keep.includes(row.current)) keep.unshift(row.current)
+            values = keep.length ? keep : values.slice(0, 6)
+        } else if (row.key === "MediaType") {
+            const keep = values.filter((v) => MEDIATYPE_SHORTLIST.some((s) => v.toLowerCase().includes(s.toLowerCase())))
+            if (row.current && !keep.includes(row.current)) keep.unshift(row.current)
+            values = keep.length ? keep : (row.current ? [row.current] : values.slice(0, 4))
+        } else if (values.length > 6) {
+            values = values.slice(0, 6)
+            if (row.current && !values.includes(row.current)) values.unshift(row.current)
+        }
+        out.push({
+            key: row.key,
+            label,
+            current: row.current,
+            values: values.map((v) => ({ value: v, display: displayOptionValue(row.key, v) })),
+        })
+    }
+    return out
 }
 
 // ---- job queue -------------------------------------------------------
@@ -438,11 +539,12 @@ export function buildAddScript({ name, uri, location, info }) {
 export const COMMANDS = [
     "printers", "jobs", "status", "cancel", "hold", "release",
     "default", "testpage", "reprint", "discover", "open-settings",
+    "options", "set-option", "supplies",
     "scan-support", "scanners", "scan-caps", "scan",
 ]
 
 const VALUE_FLAGS = new Set([
-    "--printer", "--uri", "--name", "--location", "--info",
+    "--printer", "--uri", "--name", "--location", "--info", "--option",
     "--device", "--mode", "--resolution", "--source", "--format", "--out",
 ])
 const BOOL_FLAGS = new Set([
@@ -480,6 +582,10 @@ usage:
   print-center discover  [--json]             printers on the network to add
   print-center add       --uri <ipp://…> --name <queue> [--location L]
   print-center open-settings                  launch system-config-printer
+
+  print-center options   --printer NAME [--json]   default paper/duplex/…
+  print-center set-option --printer NAME --option KEY=VALUE
+  print-center supplies  --printer NAME [--json]    live ink/toner levels
 
   print-center scan-support [--json]          are SANE + img2pdf installed?
   print-center scanners  [--json]             scanners on the network / USB

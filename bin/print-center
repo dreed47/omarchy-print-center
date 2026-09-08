@@ -302,51 +302,60 @@ async function cmdScan(a) {
 
     let pages = []
     let finalPath = ""
+    let sheetCount = 1
 
-    if (adf || fmt === "pdf") {
-        // Scan into a temp dir (one file per page), then assemble.
-        const tmp = io.makeScanTmpDir()
-        try {
+    // `--batch` is ONLY safe with an ADF: on a flatbed scanimage re-scans the
+    // same glass forever. Everything else is a single -o page.
+    const multi = adf
+
+    const tmp = io.makeScanTmpDir()
+    try {
+        let rasterFiles = []
+        if (multi) {
             const pattern = join(tmp, base + "-p%03d." + rasterExt)
             const args = buildScanArgs({
                 device: a.device, mode, resolution, source,
                 rasterFormat: raster, batchPattern: pattern,
             })
+            const { stderr } = await io.runScanimage(args, onProg)
+            rasterFiles = io.listDir(tmp).map((f) => join(tmp, f))
+            // A batch ends with a non-zero "no more documents"; that is normal
+            // once at least one page came through.
+            if (!rasterFiles.length) die("scan failed: " + tailLines(stderr))
+            sheetCount = rasterFiles.length
+        } else {
+            const one = join(tmp, base + "." + rasterExt)
+            const args = buildScanArgs({
+                device: a.device, mode, resolution, source,
+                rasterFormat: raster, outPath: one,
+            })
             const { code, stderr } = await io.runScanimage(args, onProg)
-            const scanned = io.listDir(tmp).map((f) => join(tmp, f))
-            // A flatbed batch stops with a non-zero "no documents" once the
-            // single page is done - tolerate that when we got a file.
-            if (!scanned.length) die("scan failed: " + tailLines(stderr))
-            if (fmt === "pdf") {
-                finalPath = join(outDir, base + ".pdf")
-                const r = await io.img2pdf(scanned, finalPath)
-                if (r.code !== 0) die("img2pdf failed: " + tailLines(r.stderr))
-                pages = [finalPath]
-            } else {
-                pages = scanned.map((src, i) => {
-                    const dst = join(outDir, base + (scanned.length > 1 ? "-p" + String(i + 1).padStart(3, "0") : "") + "." + rasterExt)
-                    io.moveFile(src, dst)
-                    return dst
-                })
-                finalPath = pages[0]
-            }
-            void code
-        } finally {
-            io.rmDir(tmp)
+            if (code !== 0 || !io.listDir(tmp).length) die("scan failed: " + tailLines(stderr))
+            rasterFiles = [one]
         }
-    } else {
-        // Single flatbed page straight to the destination.
-        finalPath = join(outDir, base + "." + rasterExt)
-        const args = buildScanArgs({
-            device: a.device, mode, resolution, source,
-            rasterFormat: raster, outPath: finalPath,
-        })
-        const { code, stderr } = await io.runScanimage(args, onProg)
-        if (code !== 0) die("scan failed: " + tailLines(stderr))
-        pages = [finalPath]
+
+        if (fmt === "pdf") {
+            finalPath = join(outDir, base + ".pdf")
+            const r = await io.img2pdf(rasterFiles, finalPath)
+            if (r.code !== 0) die("img2pdf failed: " + tailLines(r.stderr))
+            pages = [finalPath]
+        } else {
+            pages = rasterFiles.map((src, i) => {
+                const suffix = rasterFiles.length > 1 ? "-p" + String(i + 1).padStart(3, "0") : ""
+                const dst = join(outDir, base + suffix + "." + rasterExt)
+                io.moveFile(src, dst)
+                return dst
+            })
+            finalPath = pages[0]
+        }
+    } finally {
+        io.rmDir(tmp)
     }
 
-    outJson({ path: finalPath, pages, format: fmt, pageCount: pages.length })
+    outJson({
+        path: finalPath, pages, format: fmt,
+        pageCount: fmt === "pdf" ? sheetCount : pages.length,
+    })
 }
 
 function tailLines(s, n = 2) {

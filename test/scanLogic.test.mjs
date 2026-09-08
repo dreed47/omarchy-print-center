@@ -9,31 +9,35 @@ import {
 
 // ---- scanimage -L ------------------------------------------------
 
-test("parseScanners: eSCL airscan device", () => {
-    const out =
-        "device `airscan:e0:Canon G4080 series' is a eSCL Canon G4080 series flatbed scanner\n"
-    const [d] = parseScanners(out)
-    assert.equal(d.id, "airscan:e0:Canon G4080 series")
-    assert.equal(d.desc, "eSCL Canon G4080 series flatbed")
-    assert.equal(d.vendor, "Canon")
+test("parseScanners: real Canon output - HTML noise + two backends dedup", () => {
+    // Exactly what a Canon G4080 emits: an HTML blob, then two device lines
+    // for the same scanner (escl: knows its sources, airscan: does not).
+    const out = [
+        "<html><head><meta http-equiv=\"refresh\" content=\"0;url=index.html\"></head></html>",
+        "device `escl:https://192.168.86.99:443' is a Canon G4080 series platen,adf scanner",
+        "device `airscan:e0:Canon G4080 series' is a eSCL Canon G4080 series ip=192.168.86.99",
+    ].join("\n")
+    const list = parseScanners(out)
+    assert.equal(list.length, 1)                    // collapsed to one
+    const d = list[0]
     assert.equal(d.model, "Canon G4080 series")
-    assert.equal(d.kind, "flatbed")
-    assert.equal(d.transport, "airscan")
+    assert.equal(d.vendor, "Canon")
+    assert.equal(d.kind, "ADF")                     // kept the escl entry (knows sources)
+    assert.equal(d.id, "escl:https://192.168.86.99:443")
 })
 
-test("parseScanners: ADF device + multiple + blank lines", () => {
+test("parseScanners: distinct scanners are kept", () => {
     const out = [
-        "",
-        "device `escl:https://192.168.1.9:443' is a eSCL HP OfficeJet Pro ADF scanner",
-        "device `airscan:w1:Brother MFC' is a WSD Brother MFC sheetfed scanner",
-        "",
+        "device `escl:https://192.168.1.9:443' is a HP OfficeJet Pro adf scanner",
+        "device `airscan:w1:Brother MFC' is a WSD Brother MFC platen scanner",
     ].join("\n")
     const list = parseScanners(out)
     assert.equal(list.length, 2)
-    assert.equal(list[0].kind, "ADF")
     assert.equal(list[0].vendor, "HP")
-    assert.equal(list[1].transport, "airscan")
+    assert.equal(list[0].kind, "ADF")
     assert.equal(list[1].vendor, "Brother")
+    assert.equal(list[1].kind, "flatbed")
+    assert.equal(list[1].transport, "airscan")
 })
 
 test("parseScanners: nothing", () => {

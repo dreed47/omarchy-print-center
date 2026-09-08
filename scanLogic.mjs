@@ -11,27 +11,45 @@
 //   device `escl:https://192.168.1.9:443' is a eSCL HP OfficeJet ... scanner
 
 export function parseScanners(scanimageLOut) {
-    const list = []
+    const raw = []
     for (const line of String(scanimageLOut || "").split("\n")) {
+        // scanimage -L can emit unrelated HTML before the real lines; only
+        // "device `id' is a <desc>" counts.
         const m = line.match(/^device `([^']+)' is a (.+?)\s*$/)
         if (!m) continue
         const id = m[1].trim()
         const desc = m[2].replace(/\s+scanner$/i, "").trim()
-        list.push({ id, desc, ...describeScanner(id, desc) })
+        raw.push({ id, desc, ...describeScanner(id, desc) })
     }
-    return list
+    // The same physical scanner often shows up twice - once per SANE backend
+    // (escl: and airscan:). Collapse by model, keeping whichever entry knows
+    // its sources (mentions platen/flatbed/adf in the description).
+    const byModel = new Map()
+    for (const d of raw) {
+        const key = d.model.toLowerCase()
+        const prev = byModel.get(key)
+        if (!prev) { byModel.set(key, d); continue }
+        const better = (x) => (x.kind ? 1 : 0)
+        if (better(d) > better(prev)) byModel.set(key, d)
+    }
+    return [...byModel.values()]
 }
 
+const SOURCE_HINTS = /\b(platen|flatbed|adf|sheetfed|duplex|feeder)\b/ig
+
 function describeScanner(id, desc) {
-    const words = desc.split(/\s+/)
-    // drop a leading backend/protocol token like "eSCL" / "WSD"
-    if (/^(escl|wsd)$/i.test(words[0])) words.shift()
-    const kind = /adf|duplex/i.test(desc) ? "ADF"
-        : /flatbed/i.test(desc) ? "flatbed" : ""
-    const clean = words.join(" ").replace(/\s*(flatbed|adf|sheetfed|duplex)\s*/ig, " ").trim()
+    let s = desc
+        .replace(/\bip=\S+/ig, " ")          // "ip=192.168.86.99"
+        .replace(/^\s*(escl|wsd)\s+/i, " ")   // leading backend token
+    const kind = /\b(adf|feeder|duplex)\b/i.test(s) ? "ADF"
+        : /\b(platen|flatbed)\b/i.test(s) ? "flatbed" : ""
+    const model = s.replace(SOURCE_HINTS, " ")
+        .replace(/[,;]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
     return {
-        vendor: words[0] || "",
-        model: clean || desc,
+        vendor: (model.split(/\s+/)[0] || ""),
+        model: model || desc.trim(),
         kind,
         transport: id.split(":")[0] || "",
     }

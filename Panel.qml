@@ -215,7 +215,10 @@ Panel {
           root.scanCaps = c
           var d = c.defaults || {}
           root.scanMode = d.mode || (c.modes && c.modes[0]) || "Color"
-          root.scanResolution = d.resolution || 300
+          // Prefer a sane 300 dpi when the scanner offers it; some backends
+          // default to 75.
+          root.scanResolution = (c.resolutions && c.resolutions.indexOf(300) !== -1)
+            ? 300 : (d.resolution || 300)
           root.scanSource = d.source || ""
         } catch (e) {}
       }

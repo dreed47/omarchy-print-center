@@ -29,6 +29,7 @@ jobs:
       - name: Sources parse
         run: |
           node --check printLogic.mjs
+          node --check scanLogic.mjs
           node --check lib/io.mjs
           node --check bin/print-center
 

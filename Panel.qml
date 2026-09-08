@@ -82,9 +82,17 @@ Panel {
   function refresh() {
     if (svc) svc.pollSoon()
     if (root.showDiscover) root.runDiscover()
+    if (root.tab === "scan") root.checkScanSupport()
   }
 
   onOpenedChanged: if (root.opened) root.refresh()
+
+  // ---- tabs -------------------------------------------------
+  property string tab: "printers"   // "printers" | "scan"
+  function selectTab(t) {
+    root.tab = t
+    if (t === "scan") root.checkScanSupport()
+  }
 
   // ---- discover (this panel's own call) -----------------------
   property bool showDiscover: false
@@ -118,6 +126,159 @@ Panel {
         }
       }
     }
+  }
+
+  // ---- scanning (this panel's own calls) ----------------------
+  property var scanSupport: ({ scanimage: true, img2pdf: true, ready: true, pdf: true, missing: [] })
+  property bool scanSupportKnown: false
+  property var scanners: []
+  property bool scannersLoading: false
+  property string scanDevice: ""
+  property var scanCaps: ({})
+  property string scanMode: ""
+  property int scanResolution: 300
+  property string scanSource: ""
+  property string scanFormat: (svc && svc.cfg) ? String(svc.cfg.scanFormat || "pdf") : "pdf"
+  property bool scanning: false
+  property int scanPct: 0
+  property int scanPage: 0
+  property string scanError: ""
+  property var scanResult: null      // { path, pages, format, pageCount }
+
+  readonly property string scanDir: (svc && svc.cfg) ? String(svc.cfg.scanDir || "~/Pictures/Scans") : "~/Pictures/Scans"
+  readonly property var scanModes: (scanCaps && scanCaps.modes) ? scanCaps.modes : ["Color", "Gray"]
+  readonly property var scanResolutions: (scanCaps && scanCaps.resolutions) ? scanCaps.resolutions : [150, 300, 600]
+  readonly property var scanSources: (scanCaps && scanCaps.sources) ? scanCaps.sources : []
+
+  function checkScanSupport() {
+    if (!svc || scanSupportProc.running) return
+    scanSupportProc.command = ["node", svc.cli, "scan-support", "--json"]
+    scanSupportProc.running = true
+  }
+  Process {
+    id: scanSupportProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try { root.scanSupport = JSON.parse(String(text).trim()) || root.scanSupport } catch (e) {}
+        root.scanSupportKnown = true
+        if (root.scanSupport.ready && root.scanners.length === 0 && !root.scannersLoading)
+          root.loadScanners()
+      }
+    }
+  }
+
+  function installScanSupport() {
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+      "echo 'Installing scanning support (SANE + img2pdf)…'; omarchy-pkg-add "
+      + (root.scanSupport.missing && root.scanSupport.missing.length
+         ? root.scanSupport.missing.join(" ") : "sane sane-airscan img2pdf")])
+  }
+
+  function loadScanners() {
+    if (!svc || scannersProc.running) return
+    root.scannersLoading = true
+    root.scanError = ""
+    scannersProc.command = ["node", svc.cli, "scanners", "--json"]
+    scannersProc.running = true
+  }
+  Process {
+    id: scannersProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.scannersLoading = false
+        try { root.scanners = JSON.parse(String(text).trim()) || [] } catch (e) { root.scanners = [] }
+        if (root.scanners.length && root.scanDevice === "") root.selectScanner(root.scanners[0].id)
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { if (String(text).trim() !== "") root.scanError = shortErr(String(text)) }
+    }
+  }
+
+  function selectScanner(id) {
+    root.scanDevice = id
+    root.scanCaps = ({})
+    if (!svc || capsProc.running) return
+    capsProc.command = ["node", svc.cli, "scan-caps", "--device", id, "--json"]
+    capsProc.running = true
+  }
+  Process {
+    id: capsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var c = JSON.parse(String(text).trim()) || {}
+          root.scanCaps = c
+          var d = c.defaults || {}
+          root.scanMode = d.mode || (c.modes && c.modes[0]) || "Color"
+          root.scanResolution = d.resolution || 300
+          root.scanSource = d.source || ""
+        } catch (e) {}
+      }
+    }
+  }
+
+  function doScan() {
+    if (!svc || scanProc.running || root.scanDevice === "") return
+    root.scanning = true
+    root.scanPct = 0
+    root.scanPage = 0
+    root.scanError = ""
+    root.scanResult = null
+    var args = ["node", svc.cli, "scan", "--device", root.scanDevice,
+      "--format", root.scanFormat, "--out", root.scanDir,
+      "--mode", root.scanMode, "--resolution", String(root.scanResolution)]
+    if (root.scanSource !== "") args.push("--source", root.scanSource)
+    scanProc.command = args
+    scanProc.running = true
+  }
+  Process {
+    id: scanProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var r = JSON.parse(String(text).trim())
+          if (r && r.path) root.scanResult = r
+        } catch (e) {}
+      }
+    }
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: function (line) {
+        var m = String(line).match(/^PROGRESS (.+)$/)
+        if (m) {
+          try {
+            var o = JSON.parse(m[1])
+            if (o.progress !== undefined) root.scanPct = o.progress
+            if (o.page !== undefined) root.scanPage = o.page
+          } catch (e) {}
+        } else if (/error|failed|cannot|no such/i.test(line)) {
+          root.scanError = root.shortErr(line)
+        }
+      }
+    }
+    onExited: function (code) {
+      root.scanning = false
+      if (code !== 0 && !root.scanResult && root.scanError === "")
+        root.scanError = "scan failed (exit " + code + ")"
+      if (root.scanResult) root.scanError = ""
+    }
+  }
+
+  function shortErr(s) {
+    var t = String(s || "").trim().split("\n").filter(function (x) { return x !== "" })
+    return t.length ? t[t.length - 1].replace(/^print-center:\s*/, "") : ""
+  }
+  function openScan(path) {
+    if (path) Quickshell.execDetached(["xdg-open", String(path)])
+  }
+  function openScanFolder() {
+    Quickshell.execDetached(["xdg-open", root.scanDir.replace(/^~/, String(Quickshell.env("HOME") || ""))])
   }
 
   // ---- "Nm ago" ticker while open ---------------------------
@@ -159,6 +320,7 @@ Panel {
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh() }
+    function scan(): void { root.selectTab("scan"); root.openFromHotkey() }
   }
 
   // ---- UI -------------------------------------------------
@@ -248,6 +410,33 @@ Panel {
           }
         }
 
+        // ---- tab strip -------------------------------------
+        Row {
+          width: parent.width
+          spacing: Style.space(16)
+          Repeater {
+            model: [
+              { key: "printers", label: "Printers" },
+              { key: "scan", label: "Scan" }
+            ]
+            Text {
+              required property var modelData
+              text: modelData.label
+              color: root.tab === modelData.key ? Color.accent : root.dim
+              font.family: root.mono
+              font.pixelSize: Style.font.caption
+              font.letterSpacing: 1
+              font.bold: root.tab === modelData.key
+              MouseArea {
+                anchors.fill: parent
+                anchors.margins: -Style.space(4)
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.selectTab(modelData.key)
+              }
+            }
+          }
+        }
+
         // ---- banners ----------------------------------------
         Rectangle {
           visible: root.cliMissing
@@ -290,7 +479,7 @@ Panel {
 
         // ================= PRINTERS =================
         Column {
-          visible: !root.cliMissing && root.cupsUp
+          visible: root.tab === "printers" && !root.cliMissing && root.cupsUp
           width: parent.width
           spacing: Style.space(6)
 
@@ -428,7 +617,7 @@ Panel {
 
         // ================= QUEUE =================
         Column {
-          visible: !root.cliMissing && root.cupsUp
+          visible: root.tab === "printers" && !root.cliMissing && root.cupsUp
           width: parent.width
           spacing: Style.space(6)
 
@@ -531,7 +720,7 @@ Panel {
 
         // ================= ADD A PRINTER =================
         Column {
-          visible: !root.cliMissing && root.cupsUp
+          visible: root.tab === "printers" && !root.cliMissing && root.cupsUp
           width: parent.width
           spacing: Style.space(6)
 
@@ -616,6 +805,239 @@ Panel {
           }
         }
 
+        // ================= SCAN =================
+        Column {
+          visible: root.tab === "scan" && !root.cliMissing
+          width: parent.width
+          spacing: Style.space(10)
+
+          // --- tools not installed ---
+          Column {
+            visible: root.scanSupportKnown && !root.scanSupport.ready
+            width: parent.width
+            spacing: Style.space(6)
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Scanning needs the sane, sane-airscan and img2pdf packages."
+              color: root.fg
+              font.family: root.mono
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              visible: (root.scanSupport.missing || []).length > 0
+              width: parent.width
+              text: "missing: " + (root.scanSupport.missing || []).join(", ")
+              color: root.dim
+              font.family: root.mono
+              font.pixelSize: Style.font.caption - 1
+            }
+            PcMiniButton {
+              label: "Install scanning support"
+              onTapped: root.installScanSupport()
+            }
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "A terminal opens for the install; re-open this panel when it finishes."
+              color: Qt.darker(root.dim, 1.1)
+              font.family: root.mono
+              font.pixelSize: Style.font.caption - 2
+            }
+          }
+
+          // --- ready ---
+          Column {
+            visible: root.scanSupport.ready
+            width: parent.width
+            spacing: Style.space(8)
+
+            Row {
+              width: parent.width
+              Text {
+                text: "SCANNER"
+                color: root.dim
+                font.family: root.mono
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 1
+              }
+            }
+
+            Text {
+              visible: root.scannersLoading
+              text: "looking for scanners…"
+              color: root.dim
+              font.family: root.mono
+              font.pixelSize: Style.font.caption
+            }
+
+            Column {
+              visible: !root.scannersLoading && root.scanners.length === 0
+              width: parent.width
+              spacing: Style.space(4)
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: root.scanError !== "" ? root.scanError
+                  : "No scanner found on the network or USB."
+                color: root.scanError !== "" ? root.urgent : root.dim
+                font.family: root.mono
+                font.pixelSize: Style.font.caption
+              }
+              PcMiniButton { label: "Search again"; onTapped: root.loadScanners() }
+            }
+
+            // device picker (only when more than one)
+            Flow {
+              visible: root.scanners.length > 1
+              width: parent.width
+              spacing: Style.space(6)
+              Repeater {
+                model: root.scanners
+                ScanChip {
+                  required property var modelData
+                  label: modelData.model || modelData.desc
+                  on: root.scanDevice === modelData.id
+                  onTapped: root.selectScanner(modelData.id)
+                }
+              }
+            }
+            Text {
+              visible: root.scanners.length === 1
+              width: parent.width
+              text: root.scanners.length === 1
+                ? ((root.scanners[0].model || root.scanners[0].desc)
+                   + (root.scanners[0].kind ? "  " + root.bullet + "  " + root.scanners[0].kind : ""))
+                : ""
+              color: root.fg
+              font.family: root.mono
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+
+            // options
+            Column {
+              visible: root.scanDevice !== "" && !root.scanning
+              width: parent.width
+              spacing: Style.space(6)
+
+              ScanRow {
+                label: "Mode"
+                values: root.scanModes
+                current: root.scanMode
+                onPicked: function (v) { root.scanMode = String(v) }
+              }
+              ScanRow {
+                label: "DPI"
+                values: root.scanResolutions
+                current: root.scanResolution
+                onPicked: function (v) { root.scanResolution = parseInt(v, 10) }
+              }
+              ScanRow {
+                visible: root.scanSources.length > 0
+                label: "Source"
+                values: root.scanSources
+                current: root.scanSource
+                onPicked: function (v) { root.scanSource = String(v) }
+              }
+              ScanRow {
+                label: "File"
+                values: ["pdf", "png", "jpeg"]
+                current: root.scanFormat
+                disabledValues: root.scanSupport.pdf ? [] : ["pdf"]
+                onPicked: function (v) { root.scanFormat = String(v) }
+              }
+
+              PcMiniButton {
+                label: root.scanResult ? "Scan again" : "Scan"
+                onTapped: root.doScan()
+              }
+              Text {
+                width: parent.width
+                text: "saves to " + root.scanDir
+                color: Qt.darker(root.dim, 1.1)
+                font.family: root.mono
+                font.pixelSize: Style.font.caption - 2
+              }
+            }
+
+            // progress
+            Column {
+              visible: root.scanning
+              width: parent.width
+              spacing: Style.space(4)
+              Text {
+                text: "Scanning" + (root.scanPage > 0 ? " page " + root.scanPage : "")
+                  + "…  " + root.scanPct + "%"
+                color: root.fg
+                font.family: root.mono
+                font.pixelSize: Style.font.caption
+              }
+              Rectangle {
+                width: parent.width
+                height: Style.space(4)
+                radius: height / 2
+                color: Qt.darker(root.fg, 2.2)
+                Rectangle {
+                  width: parent.width * Math.max(0, Math.min(100, root.scanPct)) / 100
+                  height: parent.height
+                  radius: height / 2
+                  color: Color.accent
+                }
+              }
+            }
+
+            // result
+            Column {
+              visible: root.scanResult !== null && !root.scanning
+              width: parent.width
+              spacing: Style.space(6)
+              Image {
+                visible: root.scanResult && root.scanResult.format !== "pdf"
+                  && root.scanResult.pages && root.scanResult.pages.length > 0
+                width: parent.width
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: parent.width
+                source: (root.scanResult && root.scanResult.pages && root.scanResult.pages.length)
+                  ? "file://" + root.scanResult.pages[0] : ""
+              }
+              Text {
+                width: parent.width
+                text: (root.scanResult ? root.scanResult.path : "")
+                  + (root.scanResult && root.scanResult.pageCount > 1
+                     ? "  (" + root.scanResult.pageCount + " pages)" : "")
+                color: root.dim
+                font.family: root.mono
+                font.pixelSize: Style.font.caption - 1
+                elide: Text.ElideMiddle
+              }
+              Row {
+                width: parent.width
+                spacing: Style.space(6)
+                PcMiniButton {
+                  label: "Open"
+                  onTapped: root.openScan(root.scanResult ? root.scanResult.path : "")
+                }
+                PcMiniButton { label: "Folder"; onTapped: root.openScanFolder() }
+                PcMiniButton {
+                  label: "Scan another"
+                  onTapped: { root.scanResult = null; root.scanPct = 0; root.scanPage = 0 }
+                }
+              }
+            }
+
+            Text {
+              visible: root.scanError !== "" && !root.scanning && root.scanners.length > 0
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.scanError
+              color: root.urgent
+              font.family: root.mono
+              font.pixelSize: Style.font.caption - 1
+            }
+          }
+        }
+
         // ---- footer -------------------------------------------
         Column {
           width: parent.width
@@ -679,6 +1101,72 @@ Panel {
       enabled: parent.enabled
       cursorShape: Qt.PointingHandCursor
       onClicked: parent.tapped()
+    }
+  }
+
+  // A single selectable chip (scan mode / dpi / source / format value).
+  component ScanChip: Rectangle {
+    property string label: ""
+    property bool on: false
+    property bool enabled: true
+    signal tapped()
+    implicitHeight: Style.space(22)
+    implicitWidth: ct.implicitWidth + Style.space(16)
+    radius: height / 2
+    color: on ? Style.hoverFillFor(root.fg, Color.accent)
+      : (cma.containsMouse && enabled ? Qt.darker(root.fg, 2.4) : "transparent")
+    border.width: 1
+    border.color: on ? Color.accent : (enabled ? root.dim : Qt.darker(root.dim, 1.5))
+    opacity: enabled ? 1 : 0.4
+    Text {
+      id: ct
+      anchors.centerIn: parent
+      text: parent.label
+      color: parent.on ? Color.accent : root.fg
+      font.family: root.mono
+      font.pixelSize: Style.font.caption - 1
+    }
+    MouseArea {
+      id: cma
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: parent.enabled
+      cursorShape: Qt.PointingHandCursor
+      onClicked: parent.tapped()
+    }
+  }
+
+  // A labelled row of chips: "Mode  [Color] [Gray] [Lineart]".
+  component ScanRow: Row {
+    id: sr
+    property string label: ""
+    property var values: []
+    property var current: ""
+    property var disabledValues: []
+    signal picked(var value)
+    width: parent ? parent.width : 0
+    spacing: Style.space(6)
+    Text {
+      width: Style.space(44)
+      text: sr.label
+      color: root.dim
+      font.family: root.mono
+      font.pixelSize: Style.font.caption - 1
+      anchors.verticalCenter: parent.verticalCenter
+    }
+    Flow {
+      width: sr.width - Style.space(52)
+      spacing: Style.space(5)
+      Repeater {
+        model: sr.values
+        ScanChip {
+          required property var modelData
+          label: String(modelData)
+          on: String(sr.current) === String(modelData)
+          enabled: (sr.disabledValues || []).indexOf(String(modelData)) === -1
+          onTapped: sr.picked(modelData)
+        }
+      }
     }
   }
 }

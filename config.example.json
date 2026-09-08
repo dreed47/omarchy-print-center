@@ -6,5 +6,7 @@
   "trackedPrinter": "",
   "showJobCount": true,
   "openOnClick": false,
+  "scanDir": "~/Pictures/Scans",
+  "scanFormat": "pdf",
   "debug": false
 }

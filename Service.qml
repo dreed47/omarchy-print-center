@@ -70,6 +70,8 @@ Item {
     trackedPrinter: String(pick("trackedPrinter", "")),
     showJobCount: isOn(pick("showJobCount", "on")),
     openOnClick: isOn(pick("openOnClick", "off")),
+    scanDir: String(pick("scanDir", "~/Pictures/Scans")),
+    scanFormat: String(pick("scanFormat", "pdf")).toLowerCase(),
     debug: isOn(pick("debug", "off"))
   })
   function wants(type) {

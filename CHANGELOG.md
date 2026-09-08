@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0] - 2026-09-08
+
+Phase 2: scanning (SANE).
+
+### Added
+
+- **Scan tab** in the popup:
+  - Detects whether `sane` / `sane-airscan` / `img2pdf` are installed; if
+    not, an **Install scanning support** button opens a terminal running
+    `omarchy-pkg-add`.
+  - Finds scanners with `scanimage -L` (driverless eSCL / WSD via
+    `sane-airscan`, plus USB).
+  - Mode / DPI / source chips populated from `scanimage -A`.
+  - **Scan** to PDF (multi-page via `img2pdf`), PNG, or JPEG, saved to
+    `~/Pictures/Scans` (configurable). Live progress bar from scanimage's
+    `--progress` output. ADF batches into one PDF.
+  - Result: image preview (PNG/JPEG), **Open**, **Folder**, **Scan another**.
+- New `print-center` subcommands: `scan-support`, `scanners`, `scan-caps`,
+  `scan`.
+- Settings: `scanDir`, `scanFormat`.
+
 ## [0.1.0] - 2026-09-08
 
 First release. Phase 1: printing management, no new dependencies.

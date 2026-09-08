@@ -14,7 +14,16 @@ import {
     printerAlerts,
 } from "../printLogic.mjs"
 
+import {
+    parseScanners, parseScanCaps, sourceIsAdf,
+    buildScanArgs, parseProgress, scanBaseName, expandHome,
+    normalizeFormat, formatExt, scanimageRasterFormat,
+    scanSupport, SCAN_PACKAGES,
+} from "../scanLogic.mjs"
+
 import * as io from "../lib/io.mjs"
+
+import { join } from "node:path"
 
 function die(msg, code = 1) {
     process.stderr.write("print-center: " + msg + "\n")
@@ -217,6 +226,133 @@ async function cmdAdd(a) {
     console.log("added " + name)
 }
 
+// ---- scanning ---------------------------------------------------
+
+async function scanSupportInfo() {
+    const cmds = await io.hasCommands(["scanimage", "img2pdf"])
+    const missing = await io.missingPackages(SCAN_PACKAGES)
+    return scanSupport({
+        hasScanimage: cmds.scanimage,
+        hasImg2pdf: cmds.img2pdf,
+        missingPkgs: missing,
+    })
+}
+
+async function cmdScanSupport(a) {
+    const s = await scanSupportInfo()
+    if (a.json) return outJson(s)
+    console.log("scanimage: " + (s.scanimage ? "yes" : "no")
+        + "   img2pdf: " + (s.img2pdf ? "yes" : "no"))
+    if (s.missing.length) console.log("missing packages: " + s.missing.join(" "))
+    console.log(s.ready ? "scanning is available" : "install: omarchy pkg add " + SCAN_PACKAGES.join(" "))
+}
+
+async function requireScan() {
+    const s = await scanSupportInfo()
+    if (!s.scanimage) die("scanimage not found - install: omarchy pkg add " + SCAN_PACKAGES.join(" "))
+    return s
+}
+
+async function cmdScanners(a) {
+    await requireScan()
+    const list = parseScanners(await io.scanimageList())
+    if (a.json) return outJson(list)
+    if (!list.length) { console.log("(no scanners found)"); return }
+    for (const d of list) console.log(d.id + "\t" + d.desc)
+}
+
+async function cmdScanCaps(a) {
+    await requireScan()
+    if (!a.device) die("scan-caps: --device is required")
+    const caps = parseScanCaps(await io.scanimageCaps(a.device))
+    if (a.json) return outJson(caps)
+    console.log("modes:       " + caps.modes.join(", "))
+    console.log("resolutions: " + caps.resolutions.join(", "))
+    console.log("sources:     " + (caps.sources.join(", ") || "(single)"))
+    console.log("defaults:    " + JSON.stringify(caps.defaults))
+}
+
+async function cmdScan(a) {
+    const support = await requireScan()
+    if (!a.device) die("scan: --device is required")
+
+    const fmt = normalizeFormat(a.format || "pdf")
+    if (fmt === "pdf" && !support.img2pdf)
+        die("PDF output needs img2pdf - install it, or use --format png")
+
+    const caps = parseScanCaps(await io.scanimageCaps(a.device))
+    const mode = a.mode || caps.defaults.mode
+    const resolution = parseInt(a.resolution, 10) || caps.defaults.resolution
+    let source = a.source || (a.adf ? (caps.sources.find((s) => sourceIsAdf(s)) || "ADF") : caps.defaults.source)
+    const adf = sourceIsAdf(source)
+
+    const outDir = expandHome(a.out || "", process.env.HOME || "")
+    io.ensureDir(outDir)
+    const base = scanBaseName()
+    const raster = scanimageRasterFormat(fmt)          // png | jpeg | tiff
+    const rasterExt = raster === "jpeg" ? "jpg" : raster
+
+    const onProg = (chunk) => {
+        const { pct, page } = parseProgress(chunk)
+        const msg = {}
+        if (pct !== null) msg.progress = Math.round(pct)
+        if (page !== null) msg.page = page
+        if (Object.keys(msg).length) process.stderr.write("PROGRESS " + JSON.stringify(msg) + "\n")
+    }
+
+    let pages = []
+    let finalPath = ""
+
+    if (adf || fmt === "pdf") {
+        // Scan into a temp dir (one file per page), then assemble.
+        const tmp = io.makeScanTmpDir()
+        try {
+            const pattern = join(tmp, base + "-p%03d." + rasterExt)
+            const args = buildScanArgs({
+                device: a.device, mode, resolution, source,
+                rasterFormat: raster, batchPattern: pattern,
+            })
+            const { code, stderr } = await io.runScanimage(args, onProg)
+            const scanned = io.listDir(tmp).map((f) => join(tmp, f))
+            // A flatbed batch stops with a non-zero "no documents" once the
+            // single page is done - tolerate that when we got a file.
+            if (!scanned.length) die("scan failed: " + tailLines(stderr))
+            if (fmt === "pdf") {
+                finalPath = join(outDir, base + ".pdf")
+                const r = await io.img2pdf(scanned, finalPath)
+                if (r.code !== 0) die("img2pdf failed: " + tailLines(r.stderr))
+                pages = [finalPath]
+            } else {
+                pages = scanned.map((src, i) => {
+                    const dst = join(outDir, base + (scanned.length > 1 ? "-p" + String(i + 1).padStart(3, "0") : "") + "." + rasterExt)
+                    io.moveFile(src, dst)
+                    return dst
+                })
+                finalPath = pages[0]
+            }
+            void code
+        } finally {
+            io.rmDir(tmp)
+        }
+    } else {
+        // Single flatbed page straight to the destination.
+        finalPath = join(outDir, base + "." + rasterExt)
+        const args = buildScanArgs({
+            device: a.device, mode, resolution, source,
+            rasterFormat: raster, outPath: finalPath,
+        })
+        const { code, stderr } = await io.runScanimage(args, onProg)
+        if (code !== 0) die("scan failed: " + tailLines(stderr))
+        pages = [finalPath]
+    }
+
+    outJson({ path: finalPath, pages, format: fmt, pageCount: pages.length })
+}
+
+function tailLines(s, n = 2) {
+    return String(s || "").trim().split("\n").filter(Boolean).slice(-n).join(" / ") || "no output"
+}
+
 // ---- dispatch ---------------------------------------------------
 
 async function main() {
@@ -242,6 +378,10 @@ async function main() {
         case "testpage": return cmdTestpage(a)
         case "discover": return cmdDiscover(a)
         case "open-settings": io.openSettings(); console.log("launched system-config-printer"); return
+        case "scan-support": return cmdScanSupport(a)
+        case "scanners": return cmdScanners(a)
+        case "scan-caps": return cmdScanCaps(a)
+        case "scan": return cmdScan(a)
     }
 }
 

@@ -35,13 +35,21 @@ job finishes, a job is held (needs a password, filter failed), or a printer
 reports an error. The three event classes — `done`, `error`, `held` — are
 toggled independently.
 
+**Scan tab** — finds SANE scanners (driverless eSCL / WSD via `sane-airscan`,
+plus USB), lets you pick mode / resolution / source, and scans to PDF, PNG or
+JPEG in `~/Pictures/Scans`. Multi-page and ADF batches become one PDF. Live
+progress, an image preview, and Open / Folder / Scan-another when it's done.
+Scanning needs `sane`, `sane-airscan` and `img2pdf`; the tab offers a one-click
+install (opens a terminal for the sudo prompt) if they're missing.
+
 ## Requirements
 
 - Node.js — `omarchy pkg add nodejs`. The popup tells you if it is missing.
-- Everything else ships with Omarchy: `lpstat`, `lp`, `lpoptions`, `lpadmin`,
-  `lpinfo`, `driverless`, `avahi-browse`, `pkexec`, `system-config-printer`.
-
-No scanning yet — SANE support is planned for a later release.
+- Printing uses only what ships with Omarchy: `lpstat`, `lp`, `lpoptions`,
+  `lpadmin`, `lpinfo`, `driverless`, `avahi-browse`, `pkexec`,
+  `system-config-printer`.
+- Scanning (optional): `sane`, `sane-airscan`, `img2pdf` — installed from the
+  Scan tab on request.
 
 ## Install
 
@@ -89,6 +97,11 @@ print-center testpage  <printer>
 print-center discover  --json             network printers to add
 print-center add       --uri <ipp://…> --name <queue> [--location L]
 print-center open-settings
+print-center scan-support --json          are SANE + img2pdf installed?
+print-center scanners  --json
+print-center scan-caps --device <id> --json
+print-center scan      --device <id> [--mode M] [--resolution DPI]
+                       [--source S | --adf] [--format pdf|png|jpeg] [--out DIR]
 ```
 
 Only `add` elevates (`pkexec lpadmin -m everywhere`). Everything else runs as

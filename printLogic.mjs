@@ -438,7 +438,16 @@ export function buildAddScript({ name, uri, location, info }) {
 export const COMMANDS = [
     "printers", "jobs", "status", "cancel", "hold", "release",
     "default", "testpage", "reprint", "discover", "open-settings",
+    "scan-support", "scanners", "scan-caps", "scan",
 ]
+
+const VALUE_FLAGS = new Set([
+    "--printer", "--uri", "--name", "--location", "--info",
+    "--device", "--mode", "--resolution", "--source", "--format", "--out",
+])
+const BOOL_FLAGS = new Set([
+    "--json", "--completed", "--all", "--adf", "--check", "--install",
+])
 
 export function parseArgs(argv) {
     const out = { cmd: "", positionals: [], json: false, completed: false, all: false }
@@ -447,15 +456,9 @@ export function parseArgs(argv) {
     if (out.cmd === "-h" || out.cmd === "--help") { out.help = true; out.cmd = "" }
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i]
-        if (a === "--json") out.json = true
-        else if (a === "--completed") out.completed = true
-        else if (a === "--all") out.all = true
-        else if (a === "--printer") out.printer = rest[++i]
-        else if (a === "--uri") out.uri = rest[++i]
-        else if (a === "--name") out.name = rest[++i]
-        else if (a === "--location") out.location = rest[++i]
-        else if (a === "--info") out.info = rest[++i]
-        else if (a === "-h" || a === "--help") out.help = true
+        if (a === "-h" || a === "--help") out.help = true
+        else if (BOOL_FLAGS.has(a)) out[a.slice(2)] = true
+        else if (VALUE_FLAGS.has(a)) out[a.slice(2)] = rest[++i]
         else if (a.startsWith("--")) throw new Error("unknown option: " + a)
         else out.positionals.push(a)
     }
@@ -478,5 +481,12 @@ usage:
   print-center add       --uri <ipp://…> --name <queue> [--location L]
   print-center open-settings                  launch system-config-printer
 
+  print-center scan-support [--json]          are SANE + img2pdf installed?
+  print-center scanners  [--json]             scanners on the network / USB
+  print-center scan-caps --device <id> [--json]
+  print-center scan      --device <id> [--mode M] [--resolution DPI]
+                         [--source S | --adf] [--format pdf|png|jpeg] [--out DIR]
+
 Only 'add' needs elevation (pkexec lpadmin); everything else runs as you.
+Scanning needs the sane, sane-airscan and img2pdf packages.
 `

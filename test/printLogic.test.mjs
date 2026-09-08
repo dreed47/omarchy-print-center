@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 
 import {
     fmtBytes, relTime, parseCupsDate,
-    parsePrinterNames, parseDefaultPrinter, schedulerRunning,
+    parsePrinterNames, parseDeviceList, parseDefaultPrinter, parseUserDefault, effectiveDefault, schedulerRunning,
     parsePrinterOptions, printerCard,
     heldJobIds, parseLpq, assembleJobs, parseCompletedJobs,
     worstSeverity, summaryLine, humanReason,
@@ -12,7 +12,9 @@ import {
 } from "../printLogic.mjs"
 
 // Real output captured from a CUPS 2.4.19 box with one driverless Canon.
-const LPSTAT_E = "Canon-G4080-series\nOffice-HP\n"
+const LPSTAT_V =
+    "device for Canon-G4080-series: ipp://192.168.86.99:631/ipp/print\n" +
+    "device for Office-HP: dnssd://HP%20LaserJet._ipp._tcp.local/\n"
 const LPSTAT_D = "system default destination: Canon-G4080-series\n"
 const LPOPTIONS_CANON =
     "copies=1 device-uri=dnssd://Canon%20G4080%20series._ipps._tcp.local/?uuid=00000000-0000-1000-8000-00114b502dd9 " +
@@ -61,12 +63,32 @@ test("parseCupsDate reads the weekday-first format", () => {
     assert.equal(parseCupsDate(""), 0)
 })
 
-test("parsePrinterNames / parseDefaultPrinter / schedulerRunning", () => {
-    assert.deepEqual(parsePrinterNames(LPSTAT_E), ["Canon-G4080-series", "Office-HP"])
+test("parseDeviceList / parsePrinterNames read real queues from lpstat -v", () => {
+    assert.deepEqual(parseDeviceList(LPSTAT_V), [
+        { name: "Canon-G4080-series", uri: "ipp://192.168.86.99:631/ipp/print" },
+        { name: "Office-HP", uri: "dnssd://HP%20LaserJet._ipp._tcp.local/" },
+    ])
+    assert.deepEqual(parsePrinterNames(LPSTAT_V), ["Canon-G4080-series", "Office-HP"])
+    assert.deepEqual(parsePrinterNames(""), [])
+})
+
+test("parseDefaultPrinter / schedulerRunning", () => {
     assert.equal(parseDefaultPrinter(LPSTAT_D), "Canon-G4080-series")
     assert.equal(parseDefaultPrinter("no system default destination"), "")
     assert.equal(schedulerRunning("scheduler is running"), true)
     assert.equal(schedulerRunning("scheduler is not running"), false)
+})
+
+test("parseUserDefault / effectiveDefault: per-user default wins over server", () => {
+    const lpopts = "Dest Office-HP media=a4\nDefault Canon-G4080-series ColorModel=Gray\n"
+    assert.equal(parseUserDefault(lpopts), "Canon-G4080-series")
+    assert.equal(parseUserDefault("Dest Office-HP media=a4\n"), "")   // no Default line
+    assert.equal(parseUserDefault(""), "")
+    // per-user overrides the server default
+    assert.equal(effectiveDefault(lpopts, "system default destination: Office-HP"), "Canon-G4080-series")
+    // falls back to the server default when no per-user default is set
+    assert.equal(effectiveDefault("", "system default destination: Office-HP"), "Office-HP")
+    assert.equal(effectiveDefault("", "no system default destination"), "")
 })
 
 test("parsePrinterOptions handles quotes, empty keys, hashes, commas", () => {
@@ -199,9 +221,12 @@ test("parseArgs", () => {
     assert.deepEqual(parseArgs(["status", "--json"]), {
         cmd: "status", positionals: [], json: true, completed: false, all: false,
     })
-    const a = parseArgs(["add", "--uri", "ipp://h/p", "--name", "Q", "--location", "Desk 2"])
+    const a = parseArgs(["add", "--uri", "ipp://h/p", "--name", "Q", "--location", "Desk 2", "--info", "Front Canon"])
     assert.equal(a.cmd, "add"); assert.equal(a.uri, "ipp://h/p")
-    assert.equal(a.name, "Q"); assert.equal(a.location, "Desk 2")
+    assert.equal(a.name, "Q"); assert.equal(a.location, "Desk 2"); assert.equal(a.info, "Front Canon")
     assert.deepEqual(parseArgs(["jobs", "--completed", "--printer", "A"]).printer, "A")
     assert.throws(() => parseArgs(["status", "--bogus"]), /unknown option/)
+    assert.equal(parseArgs(["--help"]).help, true)
+    assert.equal(parseArgs(["-h"]).help, true)
+    assert.equal(parseArgs([]).cmd, "")
 })

@@ -120,14 +120,30 @@ Item {
   }
   function jparse(s, dflt) { try { var v = JSON.parse(s); return v === null ? dflt : v } catch (e) { return dflt } }
 
-  readonly property int pollMs: cfg.pollSeconds * 1000
+  readonly property int pollMs: Math.max(5, cfg.pollSeconds) * 1000
+  property double pollStartedMs: 0
 
   // ---- poll ---------------------------------------------------
   function poll() {
-    if (statusProc.running) return
+    if (statusProc.running) {
+      // Never let a wedged status call stop polling for good.
+      if (Date.now() - root.pollStartedMs < 20000) return
+      statusProc.running = false
+    }
+    root.pollStartedMs = Date.now()
     statusProc.command = ["node", root.cli, "status", "--json"]
     statusProc.running = true
   }
+
+  // One extra poll a moment after an action, since a CUPS change (default set,
+  // job cancelled, printer removed) can lag the command that made it.
+  Timer {
+    id: settleTimer
+    interval: 1500
+    repeat: false
+    onTriggered: root.poll()
+  }
+  function pollSoon() { Qt.callLater(root.poll); settleTimer.restart() }
 
   Process {
     id: statusProc
@@ -143,6 +159,10 @@ Item {
         }
         root.cliMissing = false
         root.applyStatus(s)
+        if (root.cfg.debug)
+          console.log("[print-center] poll: printers=" + (s.printers || []).length
+            + " default=" + s.defaultPrinter + " jobs=" + (s.jobs || []).length
+            + " worst=" + s.worstState)
       }
     }
     onExited: function (code, status) {
@@ -262,7 +282,7 @@ Item {
   }
 
   // ---- one-shot actions (called over IPC by the popup) ---------
-  Process { id: actionProc; onExited: Qt.callLater(root.poll) }
+  Process { id: actionProc; onExited: root.pollSoon() }
   function runAction(args) {
     if (actionProc.running) return
     actionProc.command = ["node", root.cli].concat(args)

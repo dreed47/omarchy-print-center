@@ -35,16 +35,38 @@ export function parseCupsDate(s) {
 
 // ---- printer discovery on this machine (lpstat) -----------------------
 
-export function parsePrinterNames(lpstatEOut) {
-    return String(lpstatEOut || "")
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
+// `lpstat -e` lists every destination you *can* print to, which on Omarchy
+// includes transient cups-browsed / driverless auto-queues that appear and
+// vanish on their own. For "my printers" we want only real configured queues,
+// which is what `lpstat -v` ("device for NAME: uri") reports.
+export function parsePrinterNames(lpstatVOut) {
+    return parseDeviceList(lpstatVOut).map((d) => d.name)
+}
+
+export function parseDeviceList(lpstatVOut) {
+    const out = []
+    for (const line of String(lpstatVOut || "").split("\n")) {
+        const m = line.match(/^device for (.+?):\s*(.+)$/)
+        if (m) out.push({ name: m[1].trim(), uri: m[2].trim() })
+    }
+    return out
 }
 
 export function parseDefaultPrinter(lpstatDOut) {
     const m = String(lpstatDOut || "").match(/system default destination:\s*(\S+)/)
     return m ? m[1] : ""
+}
+
+// The per-user default from ~/.cups/lpoptions ("Default <name> [options]").
+// `Dest` lines are non-default destinations with saved options; ignore them.
+export function parseUserDefault(lpoptionsText) {
+    const m = String(lpoptionsText || "").match(/^Default\s+(\S+)/m)
+    return m ? m[1] : ""
+}
+
+// The default the `lp` command would actually use: per-user wins over server.
+export function effectiveDefault(lpoptionsText, lpstatDOut) {
+    return parseUserDefault(lpoptionsText) || parseDefaultPrinter(lpstatDOut)
 }
 
 export function schedulerRunning(lpstatROut) {
@@ -422,6 +444,7 @@ export function parseArgs(argv) {
     const out = { cmd: "", positionals: [], json: false, completed: false, all: false }
     const rest = argv.slice()
     out.cmd = rest.shift() || ""
+    if (out.cmd === "-h" || out.cmd === "--help") { out.help = true; out.cmd = "" }
     for (let i = 0; i < rest.length; i++) {
         const a = rest[i]
         if (a === "--json") out.json = true
@@ -431,6 +454,7 @@ export function parseArgs(argv) {
         else if (a === "--uri") out.uri = rest[++i]
         else if (a === "--name") out.name = rest[++i]
         else if (a === "--location") out.location = rest[++i]
+        else if (a === "--info") out.info = rest[++i]
         else if (a === "-h" || a === "--help") out.help = true
         else if (a.startsWith("--")) throw new Error("unknown option: " + a)
         else out.positionals.push(a)

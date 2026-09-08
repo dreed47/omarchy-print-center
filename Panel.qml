@@ -73,12 +73,18 @@ Panel {
   function makeDefault(name) { act(["default", name]) }
   function testPage(name) { act(["testpage", name]) }
   function openSettings() { if (svc) svc.runAction(["open-settings"]) }
-  function addPrinter(d) { act(["add", "--uri", String(d.uri), "--name", String(d.queue)]) }
+  function addPrinter(d) {
+    var args = ["add", "--uri", String(d.uri), "--name", String(d.queue), "--info", String(d.display || d.queue)]
+    if (d.location) args.push("--location", String(d.location))
+    act(args)
+  }
 
   function refresh() {
-    if (svc) svc.poll()
+    if (svc) svc.pollSoon()
     if (root.showDiscover) root.runDiscover()
   }
+
+  onOpenedChanged: if (root.opened) root.refresh()
 
   // ---- discover (this panel's own call) -----------------------
   property bool showDiscover: false
@@ -199,6 +205,7 @@ Panel {
           width: parent.width
           height: Style.space(24)
           Text {
+            id: titleText
             anchors.left: parent.left
             anchors.leftMargin: Style.space(4)
             anchors.verticalCenter: parent.verticalCenter
@@ -209,13 +216,35 @@ Panel {
             font.bold: true
           }
           Text {
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(4)
+            anchors.left: titleText.right
+            anchors.right: refreshBtn.left
+            anchors.leftMargin: Style.space(8)
+            anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
+            horizontalAlignment: Text.AlignRight
             text: root.summary
+            elide: Text.ElideLeft
             color: root.sevColor(root.worstState)
             font.family: root.mono
             font.pixelSize: Style.font.caption
+          }
+          Text {
+            id: refreshBtn
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            text: String.fromCharCode(0xf021)   // fa-refresh
+            color: refreshArea.containsMouse ? Color.accent : root.dim
+            font.family: root.mono
+            font.pixelSize: Style.font.caption
+            MouseArea {
+              id: refreshArea
+              anchors.fill: parent
+              anchors.margins: -Style.space(5)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.refresh()
+            }
           }
         }
 
@@ -588,32 +617,32 @@ Panel {
         }
 
         // ---- footer -------------------------------------------
-        Item {
+        Column {
           width: parent.width
-          height: Style.space(24)
+          spacing: Style.space(3)
+
           Text {
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(4)
-            anchors.verticalCenter: parent.verticalCenter
+            id: settingsLink
             text: "Printer settings " + String.fromCharCode(0x2197)
-            color: root.dim
+            color: settingsArea.containsMouse ? Color.accent : root.dim
             font.family: root.mono
             font.pixelSize: Style.font.caption
             MouseArea {
+              id: settingsArea
               anchors.fill: parent
               anchors.margins: -Style.space(4)
+              hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: root.openSettings()
             }
           }
           Text {
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(4)
-            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
             text: "options: ~/.config/omarchy/print-center/config.json"
             color: Qt.darker(root.dim, 1.1)
             font.family: root.mono
             font.pixelSize: Style.font.caption - 2
+            elide: Text.ElideRight
           }
         }
       }

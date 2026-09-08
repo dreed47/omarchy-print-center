@@ -6,7 +6,7 @@
 
 import {
     parseArgs, HELP, COMMANDS,
-    parsePrinterNames, parseDefaultPrinter, schedulerRunning,
+    parsePrinterNames, parseDefaultPrinter, effectiveDefault, schedulerRunning,
     parsePrinterOptions, printerCard,
     assembleJobs, parseCompletedJobs,
     worstSeverity, summaryLine,
@@ -25,7 +25,7 @@ function outJson(v) { process.stdout.write(JSON.stringify(v) + "\n") }
 // ---- data gathering -------------------------------------------------
 
 async function collectPrinters(defaultName) {
-    const names = parsePrinterNames(await io.lpstatE())
+    const names = parsePrinterNames(await io.lpstatV())
     const cards = []
     for (const n of names) {
         const opts = parsePrinterOptions(await io.lpoptionsP(n))
@@ -44,7 +44,7 @@ async function collectJobs() {
 async function buildStatus() {
     const [rOut, dOut] = await Promise.all([io.lpstatR(), io.lpstatD()])
     const cupsUp = schedulerRunning(rOut)
-    const defaultPrinter = parseDefaultPrinter(dOut)
+    const defaultPrinter = effectiveDefault(io.userLpoptionsText(), dOut)
     if (!cupsUp) {
         return {
             cupsUp: false, defaultPrinter, printers: [], jobs: [],
@@ -95,7 +95,7 @@ async function cmdStatus(a) {
 }
 
 async function cmdPrinters(a) {
-    const def = parseDefaultPrinter(await io.lpstatD())
+    const def = effectiveDefault(io.userLpoptionsText(), await io.lpstatD())
     const printers = await collectPrinters(def)
     if (a.json) return outJson(printers)
     for (const p of printers) {
@@ -163,10 +163,12 @@ async function cmdReprint(a) {
 async function cmdDefault(a) {
     const name = a.positionals[0]
     if (!name) die("default: need a printer name")
-    const names = parsePrinterNames(await io.lpstatE())
+    const names = parsePrinterNames(await io.lpstatV())
     if (!names.includes(name)) die("no such printer: " + name)
     const { code, stderr } = await io.setUserDefault(name)
     if (code !== 0) die("could not set default: " + stderr.trim())
+    const now = effectiveDefault(io.userLpoptionsText(), await io.lpstatD())
+    if (now !== name) die("lpoptions -d ran but the default is still " + (now || "unset"))
     console.log("default is now " + name)
 }
 
@@ -184,7 +186,7 @@ async function cmdDiscover(a) {
         io.avahiBrowse("_ipp._tcp"),
         io.avahiBrowse("_ipps._tcp"),
     ])
-    const configured = new Set(parsePrinterNames(await io.lpstatE()).map((s) => s.toLowerCase()))
+    const configured = new Set(parsePrinterNames(await io.lpstatV()).map((s) => s.toLowerCase()))
     let list = assembleDiscovered(dl, ipp, ipps)
     list = list.map((d) => ({ ...d, alreadyAdded: configured.has(d.queue.toLowerCase()) }))
     if (a.json) return outJson(list)
@@ -201,7 +203,12 @@ async function cmdAdd(a) {
     if (!sanitizeQueueName(name)) die("add: invalid queue name (letters, digits, . _ - only)")
     let script
     try {
-        script = buildAddScript({ name, uri: a.uri, location: a.location, info: name })
+        script = buildAddScript({
+            name,
+            uri: a.uri,
+            location: a.location,
+            info: a.info || name.replace(/[-_]+/g, " "),
+        })
     } catch (e) {
         die(String(e.message || e))
     }

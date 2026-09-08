@@ -2,71 +2,42 @@
 
 ## [0.3.0] - 2026-09-08
 
-Phase 3: polish.
+First public release.
 
-### Added
+### Printing
 
-- **Default print options** per printer — an **Options** expander on each
-  printer row with chips for paper size, tray, paper type, quality, colour
-  and two-sided. Saved per-user (`lpoptions -o`), no password. Backed by new
-  `print-center options` / `set-option`.
-- **Live ink / toner levels** for queues that carry no supply data yet
-  (e.g. a just-added one): the device is queried directly over IPP with
-  `ipptool`. New `print-center supplies`; also folded into `status` so the
-  dots just appear.
+- **Bar pill** — the tracked printer's state and the queued-job count. Turns
+  the theme accent on a warning (paper low, ink low, paused) and urgent on an
+  error (out of paper, jam, offline) or when the CUPS service is down.
+- **Printers** — each configured printer with state, default marker, make and
+  model, and ink / supply levels. Levels come from CUPS, or straight from the
+  device over IPP (`ipptool`) when the queue carries none yet. Per printer:
+  **Set default** (per-user, no password), **Test page**, and an **Options**
+  expander for the default paper size, tray, paper type, quality, colour and
+  two-sided setting (also per-user).
+- **Queue** — active jobs with **Hold / Release** and **Cancel**, plus
+  **Clear the whole queue**.
+- **Add a network printer** — scans with `driverless` + `avahi-browse` and
+  adds the chosen one as a driverless IPP Everywhere queue. The only action
+  that asks for a password (`pkexec lpadmin`).
+- **Printer settings** link to `system-config-printer`.
+- **Headless service** — polls the queue and raises a desktop notification
+  when a job finishes, a job is held, or a printer errors. The `done`,
+  `error` and `held` classes toggle independently.
 
-## [0.2.0] - 2026-09-08
+### Scanning
 
-Phase 2: scanning (SANE).
+- **Scan tab** — finds SANE scanners (driverless eSCL / WSD via
+  `sane-airscan`, plus USB), pick mode / resolution / source, scan to PDF,
+  PNG or JPEG in `~/Pictures/Scans`. ADF batches become one PDF. Live
+  progress bar, image preview, Open / Folder / Scan another.
+- Detects whether `sane` / `sane-airscan` / `img2pdf` are installed and
+  offers a one-click install (opens a terminal for the sudo prompt).
 
-### Added
+### Under the hood
 
-- **Scan tab** in the popup:
-  - Detects whether `sane` / `sane-airscan` / `img2pdf` are installed; if
-    not, an **Install scanning support** button opens a terminal running
-    `omarchy-pkg-add`.
-  - Finds scanners with `scanimage -L` (driverless eSCL / WSD via
-    `sane-airscan`, plus USB).
-  - Mode / DPI / source chips populated from `scanimage -A`.
-  - **Scan** to PDF (multi-page via `img2pdf`), PNG, or JPEG, saved to
-    `~/Pictures/Scans` (configurable). Live progress bar from scanimage's
-    `--progress` output. ADF batches into one PDF.
-  - Result: image preview (PNG/JPEG), **Open**, **Folder**, **Scan another**.
-- New `print-center` subcommands: `scan-support`, `scanners`, `scan-caps`,
-  `scan`.
-- Settings: `scanDir`, `scanFormat`.
-
-## [0.1.0] - 2026-09-08
-
-First release. Phase 1: printing management, no new dependencies.
-
-### Added
-
-- **Bar pill** showing the tracked printer's state and the queued-job count.
-  Turns the theme accent on a warning (paper low, ink low, paused) and urgent
-  on an error (out of paper, jam, offline) or when CUPS is not running.
-- **Popup**:
-  - Printer list with state, default marker, make/model, and ink / supply
-    levels read from `lpoptions`.
-  - Per-printer **Set default** (per-user, no password) and **Test page**.
-  - Active **queue** with per-job **Hold / Release** and **Cancel**, plus
-    **Clear the whole queue**.
-  - **Add a network printer** — scans with `driverless` + `avahi-browse` and
-    adds the chosen one as a driverless IPP Everywhere queue. This is the only
-    action that asks for a password (`pkexec lpadmin`).
-  - **Printer settings** link to `system-config-printer`.
-- **Headless service** polling `print-center status --json` and raising a
-  desktop notification when a job finishes, a job is held, or a printer
-  reports an error. Event classes (`done`, `error`, `held`) are individually
-  toggleable.
-- **`print-center` CLI** — the single engine the widget and service both call:
-  `status`, `printers`, `jobs`, `cancel`, `hold`, `release`, `reprint`,
-  `default`, `testpage`, `discover`, `add`, `open-settings`.
-
-### Notes
-
-- Uses only CUPS tooling Omarchy already ships (`lpstat`, `lp`, `lpoptions`,
-  `lpadmin`, `lpinfo`, `driverless`) plus `avahi-browse` and `pkexec`.
-- Requires Node.js (`omarchy pkg add nodejs`); the popup says so if it is
-  missing.
-- Scanning (SANE) is planned for a later release and is **not** in 0.1.0.
+- All CUPS / SANE access is in one Node CLI (`bin/print-center`); the bar
+  widget and the service both shell out to it. Parsing is pure and
+  unit-tested (42 tests); system calls are isolated in `lib/io.mjs`.
+- Requires Node.js (`omarchy pkg add nodejs`); the popup says so if missing.
+- Everything else for printing ships with Omarchy.

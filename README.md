@@ -66,6 +66,22 @@ omarchy restart shell
 
 Then add **Print Center** to the bar from the shell's widget menu.
 
+## Remove
+
+Remove the widget from the bar in the shell's widget menu, then:
+
+```bash
+rm -rf ~/.config/omarchy/plugins/print-center
+omarchy restart shell
+```
+
+Optional leftovers you can delete: `~/.config/omarchy/print-center/`
+(settings) and `~/.cups/lpoptions` entries added by "Set default" / the
+Options editor (those are standard CUPS per-user options, safe to keep).
+The plugin never installed packages without you asking; `sane` /
+`sane-airscan` / `img2pdf` (if you added them for scanning) can be removed
+with `omarchy pkg drop sane sane-airscan img2pdf`.
+
 ## Settings
 
 Set from the widget's entry in `shell.json`, or in

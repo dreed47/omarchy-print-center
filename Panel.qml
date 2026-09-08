@@ -40,8 +40,6 @@ Panel {
   readonly property int activeJobs: svc ? (svc.activeJobs || 0) : 0
 
   readonly property var updateInfo: svc ? (svc.updateInfo || ({})) : ({})
-  readonly property string updateState: svc ? String(svc.updateState || "idle") : "idle"
-  readonly property string updateError: svc ? String(svc.updateError || "") : ""
 
   readonly property string printerGlyph: String.fromCharCode(0xf02f)
   readonly property string bullet: String.fromCharCode(0x2022)
@@ -143,8 +141,6 @@ Panel {
     if (root.updateInfo && root.updateInfo.url)
       Quickshell.execDetached(["xdg-open", String(root.updateInfo.url)])
   }
-  function doSelfUpdate() { if (svc) svc.selfUpdate() }
-  function restartShell() { Quickshell.execDetached(["omarchy", "restart", "shell"]) }
 
   onOpenedChanged: if (root.opened) root.refresh()
 
@@ -505,9 +501,9 @@ Panel {
           }
         }
 
-        // ---- update banner ---------------------------------
+        // ---- update banner (read-only: links to the release) ------
         Rectangle {
-          visible: (root.updateInfo && root.updateInfo.updateAvailable === true) || root.updateState === "done"
+          visible: root.updateInfo && root.updateInfo.updateAvailable === true
           width: parent.width
           implicitHeight: upCol.implicitHeight + Style.space(16)
           radius: Style.cornerRadius
@@ -523,11 +519,9 @@ Panel {
 
             Text {
               width: parent.width
-              text: root.updateState === "done"
-                ? (String.fromCharCode(0xf021) + "  Updated — restart the shell to load it")
-                : (String.fromCharCode(0xf062) + "  Update available  "
-                   + (root.updateInfo.current || "") + "  " + String.fromCharCode(0x2192)
-                   + "  " + (root.updateInfo.latest || ""))
+              text: String.fromCharCode(0xf062) + "  Update available  "
+                + (root.updateInfo.current || "") + "  " + String.fromCharCode(0x2192)
+                + "  " + (root.updateInfo.latest || "")
               color: root.fg
               font.family: root.mono
               font.pixelSize: Style.font.caption
@@ -536,25 +530,13 @@ Panel {
             }
 
             Text {
-              visible: root.updateState !== "done" && !root.updateInfo.canSelfUpdate
+              visible: String(root.updateInfo.notes || "") !== ""
               width: parent.width
-              wrapMode: Text.WordWrap
-              text: root.updateInfo.installKind === "symlink"
-                ? "Developer install — update it with git in your checkout."
-                : "Installed without git — reinstall from the release."
+              text: String(root.updateInfo.notes || "").split("\n")[0]
               color: root.dim
               font.family: root.mono
               font.pixelSize: Style.font.caption - 2
-            }
-
-            Text {
-              visible: root.updateError !== "" && root.updateState !== "done"
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: root.updateError
-              color: root.urgent
-              font.family: root.mono
-              font.pixelSize: Style.font.caption - 2
+              elide: Text.ElideRight
             }
 
             Row {
@@ -562,20 +544,8 @@ Panel {
               topPadding: Style.space(2)
 
               PcMiniButton {
-                visible: root.updateState !== "done"
                 label: "What's new"
                 onTapped: root.whatsNew()
-              }
-              PcMiniButton {
-                visible: root.updateState !== "done" && root.updateInfo.canSelfUpdate
-                label: root.updateState === "updating" ? "Updating…" : "Update"
-                enabled: root.updateState !== "updating"
-                onTapped: root.doSelfUpdate()
-              }
-              PcMiniButton {
-                visible: root.updateState === "done"
-                label: "Restart shell"
-                onTapped: root.restartShell()
               }
             }
           }

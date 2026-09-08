@@ -304,23 +304,19 @@ Item {
     onTriggered: root.poll()
   }
 
-  // ---- update checking ------------------------------------
+  // ---- update checking (read-only) -----------------------
   //
-  // Once a day (configurable) the CLI asks GitHub for the latest release and
-  // reports it back with how this plugin copy is installed. A newer version
-  // fires one notification per version; the popup shows a banner with an
-  // "Update" button when the install is a plain git checkout.
+  // Once a day (configurable) the CLI asks GitHub whether a newer release
+  // tag exists. If so, one notification fires per version and the popup
+  // shows a banner linking to the release. There is no self-updater - the
+  // user updates by whatever method they installed with.
   property var updateInfo: ({
-    current: "", latest: "", url: "", notes: "",
-    installKind: "unknown", updateAvailable: false, canSelfUpdate: false
+    current: "", latest: "", tag: "", url: "", notes: "", updateAvailable: false
   })
-  property string updateState: "idle"    // idle | checking | updating | done | error
-  property string updateError: ""
 
   function checkUpdate() {
-    if (!root.cfg.checkUpdates || updateProc.running || selfUpdateProc.running) return
-    root.updateState = "checking"
-    updateProc.command = ["node", root.cli, "check-update", "--plugin-dir", root.pluginDir, "--json"]
+    if (!root.cfg.checkUpdates || updateProc.running) return
+    updateProc.command = ["node", root.cli, "check-update", "--json"]
     updateProc.running = true
   }
   Process {
@@ -328,7 +324,6 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.updateState = "idle"
         try {
           var info = JSON.parse(String(text).trim())
           if (info && typeof info === "object") { root.updateInfo = info; root.maybeNotifyUpdate() }
@@ -343,45 +338,7 @@ Item {
     if (String(i.latest) === String(st.notifiedUpdateVersion)) return
     st.notifiedUpdateVersion = String(i.latest)
     notify("normal", "", "Print Center " + i.latest + " available",
-      i.canSelfUpdate ? "Open the popup to update"
-                      : "See what's new on GitHub", false, i.url)
-  }
-
-  function selfUpdate() {
-    if (selfUpdateProc.running || !root.updateInfo.canSelfUpdate) return
-    root.updateState = "updating"
-    root.updateError = ""
-    selfUpdateProc.command = ["node", root.cli, "self-update", "--plugin-dir", root.pluginDir, "--json"]
-    selfUpdateProc.running = true
-  }
-  Process {
-    id: selfUpdateProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try {
-          var r = JSON.parse(String(text).trim())
-          if (r && r.updated) {
-            root.updateState = "done"
-            root.notify("normal", "", "Print Center updated to " + r.version,
-              "Run  omarchy restart shell  to load it", false, "")
-            Qt.callLater(root.checkUpdate)
-            return
-          }
-        } catch (e) {}
-        root.updateState = "error"
-      }
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var e = String(text).trim().replace(/^print-center:\s*/, "")
-        if (e !== "") root.updateError = e
-      }
-    }
-    onExited: function (code) {
-      if (code !== 0 && root.updateState !== "done") root.updateState = "error"
-    }
+      "See what's new on GitHub", false, i.url)
   }
 
   Timer {
@@ -408,7 +365,6 @@ Item {
     function testPage(name: string): void { root.runAction(["testpage", name]) }
     function openSettings(): void { root.runAction(["open-settings"]) }
     function checkUpdate(): void { Qt.callLater(root.checkUpdate) }
-    function selfUpdate(): void { root.selfUpdate() }
     function status(): string {
       return JSON.stringify({
         cliMissing: root.cliMissing,
@@ -421,8 +377,7 @@ Item {
         worstState: root.worstState,
         summary: root.summary,
         lastPollMs: root.lastPollMs,
-        updateInfo: root.updateInfo,
-        updateState: root.updateState
+        updateInfo: root.updateInfo
       })
     }
   }

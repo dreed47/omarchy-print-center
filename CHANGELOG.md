@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.1] - 2026-09-08
+
+### Changed
+
+- **Removed the self-updater** (the banner's *Update* button and the
+  `self-update` subcommand) at marketplace security review: checking out a
+  moving GitHub tag into the live plugin directory isn't bound to reviewed
+  bytes. The update **check** stays — the popup still shows a banner and
+  links to the release when a newer tag exists; you update by whatever
+  method you installed with.
+- No more `git fetch` / `git checkout` / install-kind detection in the
+  plugin.
+
 ## [0.4.0] - 2026-09-08
 
 ### Added

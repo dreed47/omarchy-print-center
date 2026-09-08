@@ -13,7 +13,7 @@ import {
     worstSeverity, summaryLine,
     assembleDiscovered, buildAddScript, sanitizeQueueName,
     printerAlerts,
-    parseRelease, repoSlug, buildUpdateInfo, semverGt,
+    parseRelease, repoSlug, buildUpdateInfo,
 } from "../printLogic.mjs"
 
 import {
@@ -285,7 +285,7 @@ async function cmdSupplies(a) {
     for (const m of markers) console.log(m.name + ": " + m.level + "%")
 }
 
-// ---- update checking / self-update ----------------------------
+// ---- update checking (read-only) -----------------------------
 
 function updateSlug() {
     return repoSlug((PKG.repository && PKG.repository.url) || "")
@@ -297,52 +297,17 @@ function installedVersion(pluginDir) {
         || MANIFEST.version || PKG.version || "0.0.0"
 }
 
-function linkDir() {
-    const home = process.env.HOME || ""
-    return home ? join(home, ".config", "omarchy", "plugins") : ""
-}
-
+// Read-only: report whether a newer GitHub release exists. There is
+// deliberately no self-updater - the popup shows a banner and links to the
+// release; the user updates by their normal method.
 async function cmdCheckUpdate(a) {
     const pluginDir = a["plugin-dir"] || SELF_DIR
-    const kind = io.detectInstallKind(pluginDir, linkDir())
     const rel = parseRelease(await io.githubLatestRelease(updateSlug()))
-    const info = buildUpdateInfo(installedVersion(pluginDir),
-        rel.version ? rel : null, kind)
+    const info = buildUpdateInfo(installedVersion(pluginDir), rel.version ? rel : null)
     if (a.json) return outJson(info)
     if (!rel.version) { console.log("could not reach GitHub"); return }
     console.log("current " + info.current + "   latest " + info.latest
-        + (info.updateAvailable ? "   -> update available" : "   (up to date)"))
-    console.log("install: " + kind + (info.canSelfUpdate ? " (self-update ok)" : ""))
-}
-
-async function cmdSelfUpdate(a) {
-    const pluginDir = a["plugin-dir"] || SELF_DIR
-    const kind = io.detectInstallKind(pluginDir, linkDir())
-    if (kind === "symlink") die("this is a linked dev checkout - update it with git yourself")
-    if (kind !== "git") die("installed without git - reinstall from the latest release")
-    if (!(await io.gitWorkingTreeClean(pluginDir)))
-        die("the plugin directory has uncommitted changes - not touching it")
-
-    const fetch = await io.gitFetchTags(pluginDir)
-    if (fetch.code !== 0) die("git fetch failed: " + tailLines(fetch.stderr))
-
-    let tag = a.tag
-    if (!tag) {
-        const rel = parseRelease(await io.githubLatestRelease(updateSlug()))
-        tag = rel.tag || (await io.gitLatestTag(pluginDir))
-    }
-    if (!tag) die("could not determine the latest tag")
-
-    const cur = installedVersion(pluginDir)
-    if (!semverGt(tag.replace(/^v/i, ""), cur))
-        die("already on " + cur + " (latest tag " + tag + ")")
-
-    const co = await io.gitCheckoutTag(pluginDir, tag)
-    if (co.code !== 0) die("git checkout " + tag + " failed: " + tailLines(co.stderr))
-
-    const now = readJson(join(pluginDir, "manifest.json")).version || ""
-    outJson({ updated: true, version: now || tag.replace(/^v/i, ""), tag,
-        restartHint: "omarchy restart shell" })
+        + (info.updateAvailable ? "   -> update available: " + info.url : "   (up to date)"))
 }
 
 // ---- scanning ---------------------------------------------------
@@ -510,7 +475,6 @@ async function main() {
         case "set-option": return cmdSetOption(a)
         case "supplies": return cmdSupplies(a)
         case "check-update": return cmdCheckUpdate(a)
-        case "self-update": return cmdSelfUpdate(a)
         case "scan-support": return cmdScanSupport(a)
         case "scanners": return cmdScanners(a)
         case "scan-caps": return cmdScanCaps(a)

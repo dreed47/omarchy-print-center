@@ -577,7 +577,7 @@ export function repoSlug(url) {
     return m ? m[1] : ""
 }
 
-export function buildUpdateInfo(currentVersion, release, installKind) {
+export function buildUpdateInfo(currentVersion, release) {
     const rel = release || {}
     return {
         current: String(currentVersion || ""),
@@ -585,9 +585,7 @@ export function buildUpdateInfo(currentVersion, release, installKind) {
         tag: rel.tag || "",
         url: rel.url || "",
         notes: rel.notes || "",
-        installKind: installKind || "unknown",   // git | symlink | copy | unknown
         updateAvailable: !!rel.version && semverGt(rel.version, currentVersion),
-        canSelfUpdate: installKind === "git" && !!rel.version && semverGt(rel.version, currentVersion),
     }
 }
 
@@ -598,13 +596,13 @@ export const COMMANDS = [
     "default", "testpage", "reprint", "discover", "open-settings",
     "options", "set-option", "supplies",
     "scan-support", "scanners", "scan-caps", "scan",
-    "check-update", "self-update",
+    "check-update",
 ]
 
 const VALUE_FLAGS = new Set([
     "--printer", "--uri", "--name", "--location", "--info", "--option",
     "--device", "--mode", "--resolution", "--source", "--format", "--out",
-    "--plugin-dir", "--tag",
+    "--plugin-dir",
 ])
 const BOOL_FLAGS = new Set([
     "--json", "--completed", "--all", "--adf", "--check", "--install",
@@ -647,7 +645,6 @@ usage:
   print-center supplies  --printer NAME [--json]    live ink/toner levels
 
   print-center check-update [--json]          is a newer release out?
-  print-center self-update  [--json]          git-checkout the latest tag
 
   print-center scan-support [--json]          are SANE + img2pdf installed?
   print-center scanners  [--json]             scanners on the network / USB

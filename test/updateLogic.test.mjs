@@ -51,32 +51,22 @@ test("repoSlug", () => {
     assert.equal(repoSlug("not a url"), "")
 })
 
-test("buildUpdateInfo: git install, newer release", () => {
-    const rel = parseRelease({ tag_name: "v0.4.0", html_url: "u", body: "notes" })
-    const i = buildUpdateInfo("0.3.0", rel, "git")
-    assert.equal(i.current, "0.3.0")
-    assert.equal(i.latest, "0.4.0")
-    assert.equal(i.updateAvailable, true)
-    assert.equal(i.canSelfUpdate, true)
-})
-
-test("buildUpdateInfo: symlink install cannot self-update", () => {
-    const rel = parseRelease({ tag_name: "v0.4.0", html_url: "u" })
-    const i = buildUpdateInfo("0.3.0", rel, "symlink")
-    assert.equal(i.updateAvailable, true)
-    assert.equal(i.canSelfUpdate, false)
+test("buildUpdateInfo: newer release", () => {
+    const rel = parseRelease({ tag_name: "v0.4.1", html_url: "u", body: "notes" })
+    const i = buildUpdateInfo("0.4.0", rel)
+    assert.deepEqual(i, {
+        current: "0.4.0", latest: "0.4.1", tag: "v0.4.1",
+        url: "u", notes: "notes", updateAvailable: true,
+    })
 })
 
 test("buildUpdateInfo: up to date", () => {
-    const rel = parseRelease({ tag_name: "v0.3.0", html_url: "u" })
-    const i = buildUpdateInfo("0.3.0", rel, "git")
+    const i = buildUpdateInfo("0.4.1", parseRelease({ tag_name: "v0.4.1", html_url: "u" }))
     assert.equal(i.updateAvailable, false)
-    assert.equal(i.canSelfUpdate, false)
 })
 
 test("buildUpdateInfo: no release reachable", () => {
-    const i = buildUpdateInfo("0.3.0", null, "git")
+    const i = buildUpdateInfo("0.4.1", null)
     assert.equal(i.latest, "")
     assert.equal(i.updateAvailable, false)
-    assert.equal(i.canSelfUpdate, false)
 })

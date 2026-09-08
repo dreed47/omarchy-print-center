@@ -14,7 +14,9 @@ import qs.Ui
 Panel {
   id: root
   moduleName: "io.github.dreed47.print-center"
-  ipcTarget: "print-center"
+  // The headless service owns the short "print-center" IPC target; the popup
+  // takes the full plugin id so the two handlers do not collide.
+  ipcTarget: "io.github.dreed47.print-center"
   manageIpc: false
 
   property var anchorItem: null

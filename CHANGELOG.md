@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.3] - 2026-09-22
+
+### Fixed
+
+- **Notification spam from the new zero-page alert added in 0.4.2.**
+  `Service.qml`'s notification dedup tracked which alerts a printer "had
+  last poll" using raw `printer-state-reasons` codes only. The new
+  `zero-page-job` alert isn't a state-reason at all (it comes from
+  `page_log`), so it could never appear in that tracked list — meaning it
+  looked "new" on every single poll and fired a fresh notification
+  roughly every `pollSeconds` (default 20s) for as long as the underlying
+  job stayed in CUPS's completed-job history. Fixed to track by each
+  printer's actual alert *codes* (`p.alerts`, the superset that already
+  includes state-reason alerts) instead of raw state-reasons directly, so
+  any alert type — this one and any future one — is correctly remembered
+  and only notified once per new occurrence.
+
 ## [0.4.2] - 2026-09-22
 
 ### Added

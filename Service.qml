@@ -120,7 +120,7 @@ Item {
     property bool baselined: false
     property string activeIdsJson: "[]"       // job ids seen active last poll
     property string heldIdsJson: "[]"         // job ids seen held last poll
-    property string printerReasonsJson: "{}"  // { printerName: ["reason", ...] }
+    property string printerReasonsJson: "{}"  // { printerName: ["alert-code", ...] } seen last poll
     property string notifiedUpdateVersion: "" // release we've already nagged about
   }
   function jparse(s, dflt) { try { var v = JSON.parse(s); return v === null ? dflt : v } catch (e) { return dflt } }
@@ -201,9 +201,15 @@ Item {
       .map(function (j) { return j.id })
     var curHeld = jobs.filter(function (j) { return j.state === "held" })
       .map(function (j) { return j.id })
+    // Track by alert CODE, not raw stateReasons - printers[i].alerts is the
+    // superset that also includes non-stateReasons alerts (e.g. a
+    // zero-page-job completion, see printLogic.zeroPageAlerts). Tracking
+    // stateReasons directly meant any alert without a matching stateReason
+    // could never appear in "seen last poll", so it renotified every single
+    // poll forever instead of once.
     var curReasons = {}
     for (var i = 0; i < printers.length; i++)
-      curReasons[printers[i].name] = (printers[i].stateReasons || []).slice()
+      curReasons[printers[i].name] = (printers[i].alerts || []).map(function (a) { return a.code })
 
     if (!st.baselined) {
       st.activeIdsJson = JSON.stringify(curActive)

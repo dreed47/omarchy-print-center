@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.4] - 2026-09-22
+
+### Reverted
+
+- **v0.4.2 (zero-page-print detection) and v0.4.3 (its notification-spam
+  fix) are both reverted.** Requested after 0.4.3 didn't resolve things
+  to the user's satisfaction. Content is identical to v0.4.1 — the
+  zero-page alert, `page_log` reading, and the related dedup change to
+  `Service.qml` are all gone. `v0.4.2`/`v0.4.3` on GitHub are marked
+  superseded/do-not-install; nothing in this plugin ever caused or fixed
+  actual print output — that's a separate system-level `libcupsfilters`
+  issue outside this plugin's scope.
+
 ## [0.4.1] - 2026-09-08
 
 ### Changed

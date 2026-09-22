@@ -10,7 +10,6 @@ import {
     parsePrinterOptions, printerCard,
     parseLpoptionsL, shapePrinterOptions, parseIpptoolMarkers,
     assembleJobs, parseCompletedJobs,
-    parsePageLogTotals, zeroPageAlerts,
     worstSeverity, summaryLine,
     assembleDiscovered, buildAddScript, sanitizeQueueName,
     printerAlerts,
@@ -78,19 +77,15 @@ async function buildStatus() {
             summary: "CUPS service is not running",
         }
     }
-    const [printers, jobs, completedRaw, pageLogText] = await Promise.all([
-        collectPrinters(defaultPrinter), collectJobs(), io.lpstatCompleted(), io.readPageLogTail(),
+    const [printers, jobs, completedRaw] = await Promise.all([
+        collectPrinters(defaultPrinter), collectJobs(), io.lpstatCompleted(),
     ])
-    const recentCompleted = parseCompletedJobs(completedRaw).slice(0, 5)
-    const pageLogTotals = parsePageLogTotals(pageLogText)
-    const zeroPageByPrinter = new Map(zeroPageAlerts(recentCompleted, pageLogTotals).map((a) => [a.printer, a]))
     // attach a per-printer active job count + human-readable alerts
     for (const p of printers) {
         p.jobCount = jobs.filter((j) => j.printer === p.name).length
         p.alerts = printerAlerts(p.stateReasons)
-        const zp = zeroPageByPrinter.get(p.name)
-        if (zp) p.alerts.push(zp)
     }
+    const recentCompleted = parseCompletedJobs(completedRaw).slice(0, 5)
     return {
         cupsUp: true,
         defaultPrinter,

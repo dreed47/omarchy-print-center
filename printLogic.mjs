@@ -321,51 +321,6 @@ export function parseCompletedJobs(lpstatWCompletedOut) {
         .sort((a, b) => b.submittedAt - a.submittedAt)
 }
 
-// ---- zero-page completions ("completed" but nothing printed) --------
-//
-// CUPS's page_log carries one "total N" line per job with the real page
-// count, e.g.:
-//   Canon-G4080-series david 10 [22/Sep/2026:12:55:59 -0400] total 0 - localhost Print Center test page - -
-// A job whose queue state is "completed" but whose page_log total is 0
-// usually means a filter or backend crash that CUPS itself only reported
-// via a transient printer-state-message - which typically clears again
-// within the same poll interval, well before a user (or this plugin)
-// ever sees it. Known real-world cause on Arch-based distros as of
-// 2026-09: a libcupsfilters 2.2.x regression that crashes pdftopdf on
-// PDFs with certain link/form annotations (OpenPrinting/libcupsfilters#246) -
-// but this check is written generically, not keyed to that one bug, so it
-// also catches any other silent zero-page completion (paper jam cleared
-// before the next poll, a different filter crash, etc).
-export function parsePageLogTotals(pageLogText) {
-    const totals = new Map()   // jobId (number) -> { printer, pages }
-    for (const line of String(pageLogText || "").split("\n")) {
-        const m = line.match(/^(\S+)\s+(\S+)\s+(\d+)\s+\[[^\]]+\]\s+total\s+(\d+)\b/)
-        if (!m) continue
-        totals.set(parseInt(m[3], 10), { printer: m[1], pages: parseInt(m[4], 10) })
-    }
-    return totals
-}
-
-// One alert per printer with the most recent zero-page completion (not one
-// per job - a stuck printer would otherwise flood the card with repeats).
-export function zeroPageAlerts(recentCompleted, pageLogTotals) {
-    const seenPrinters = new Set()
-    const alerts = []
-    for (const j of recentCompleted || []) {
-        const total = pageLogTotals && pageLogTotals.get(j.idNum)
-        if (!total || total.pages !== 0) continue
-        if (seenPrinters.has(j.printer)) continue
-        seenPrinters.add(j.printer)
-        alerts.push({
-            printer: j.printer,
-            code: "zero-page-job",
-            text: "\"" + (j.title || "a recent job") + "\" completed but printed 0 pages",
-            severity: "warn",
-        })
-    }
-    return alerts
-}
-
 // ---- severity classification ---------------------------------------
 
 const ERROR_REASONS = [
@@ -395,12 +350,8 @@ export function printerAlerts(stateReasons) {
         .sort((a, b) => (b.severity === "error") - (a.severity === "error"))
 }
 
-// Worst of: any printer state-reason, any extra alert already attached to
-// the card (e.g. a zero-page completion - see zeroPageAlerts), or a job
-// that is held or on a stopped printer. Returns "ok" | "warn" | "error".
-// Checks both `p.stateReasons` and `p.alerts` rather than only the latter,
-// so a caller that hasn't populated `.alerts` yet (or a fixture that only
-// sets `.stateReasons`) still gets the right answer.
+// Worst of: any printer state-reason + any job that is held or on a stopped
+// printer. Returns "ok" | "warn" | "error".
 export function worstSeverity(printers, jobs) {
     let sev = "ok"
     const bump = (s) => {
@@ -409,7 +360,6 @@ export function worstSeverity(printers, jobs) {
     }
     for (const p of printers || []) {
         for (const r of p.stateReasons || []) bump(reasonSeverity(r))
-        for (const a of p.alerts || []) bump(a.severity)
         if (p.state === "stopped") bump("warn")
     }
     for (const j of jobs || []) {
@@ -418,11 +368,7 @@ export function worstSeverity(printers, jobs) {
     return sev
 }
 
-// Short human status for the popup header. Only "error"-severity alerts
-// override "Ready" here - a "warn" (paper low, a zero-page completion, ...)
-// still shows via the per-printer alert badge without being this alarmist
-// in the header for what might be a one-off. Checks both `p.stateReasons`
-// and `p.alerts` - see worstSeverity's comment for why.
+// Short human status for the popup header.
 export function summaryLine(printers, jobs, defaultName) {
     const active = (jobs || []).filter((j) => j.state !== "held")
     const held = (jobs || []).filter((j) => j.state === "held")
@@ -430,9 +376,6 @@ export function summaryLine(printers, jobs, defaultName) {
     for (const p of printers || []) {
         for (const r of p.stateReasons || []) {
             if (reasonSeverity(r) === "error") errs.push(p.name + ": " + humanReason(r))
-        }
-        for (const a of p.alerts || []) {
-            if (a.severity === "error") errs.push(p.name + ": " + a.text)
         }
     }
     if (errs.length) return errs[0]

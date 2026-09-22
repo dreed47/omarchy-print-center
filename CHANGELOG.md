@@ -1,28 +1,5 @@
 # Changelog
 
-## [0.4.2] - 2026-09-22
-
-### Added
-
-- **Detect silent zero-page print failures.** A job can complete in CUPS's
-  queue — no error, no lingering printer-state-reason — while the printer
-  never actually prints anything. This is easy to hit right now on
-  Arch-based distros (Omarchy included): a `libcupsfilters 2.2.x`
-  regression ([OpenPrinting/libcupsfilters#246](https://github.com/OpenPrinting/libcupsfilters/issues/246))
-  crashes the `pdftopdf` filter on PDFs with certain link/form
-  annotations — common output from browsers like Chrome — and CUPS's own
-  `printer-state-message` explaining why clears again within seconds,
-  well before the next poll. Until now this looked identical to a real
-  successful print, with no way to tell from the popup.
-  Print Center now cross-checks each recently-completed job against
-  CUPS's own `page_log` (world-readable, no elevation needed) and flags
-  any job that completed with 0 actual pages printed, right on the
-  printer's card and in the bar pill. Written generically — it isn't
-  keyed to that one bug, so it also catches any other cause of a silent
-  zero-page completion.
-- New pure helpers: `parsePageLogTotals`, `zeroPageAlerts` (`printLogic.mjs`);
-  new `io.readPageLogTail()`.
-
 ## [0.4.1] - 2026-09-08
 
 ### Changed

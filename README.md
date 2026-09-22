@@ -59,6 +59,33 @@ install (opens a terminal for the sudo prompt) if they're missing.
 - Scanning (optional): `sane`, `sane-airscan`, `img2pdf` — installed from the
   Scan tab on request.
 
+## Known issue: libcupsfilters 2.2.1
+
+Omarchy's `libcupsfilters` 2.2.1 breaks two jobs inside CUPS's `pdftopdf`
+filter. Print Center only hands the file to CUPS, so the same jobs fail from
+any app. Printing an existing PDF still works. Phone and Mac are unaffected.
+
+- **Chrome, printed directly.** Chrome's PDF gives every link an annotation
+  with no appearance stream (`/BBox`). `pdftopdf` exits with status 1 and
+  nothing is sent to the printer. This is
+  [OpenPrinting/libcupsfilters#246](https://github.com/OpenPrinting/libcupsfilters/issues/246).
+  Save as PDF, then print that file.
+- **The Test page button.** CUPS's banner template crashes the same filter,
+  without the #246 warning.
+
+Until Arch ships a build that contains the fix, downgrade and pin:
+
+```bash
+sudo pacman -U https://archive.archlinux.org/packages/l/libcupsfilters/libcupsfilters-2.1.1-4-x86_64.pkg.tar.zst
+```
+
+Add `libcupsfilters` to `IgnorePkg` in `/etc/pacman.conf`. A later update that
+has a newer build prints `ignoring package upgrade (libcupsfilters)`. That
+means a newer package exists, not that the bug is fixed. Remove the pin after
+[#246](https://github.com/OpenPrinting/libcupsfilters/issues/246) is fixed in
+that build, update, and print a Chrome page that has links. Try the Test page
+too; that crash is separate, so Chrome can be fixed while the button still fails.
+
 ## Install
 
 From the Omarchy plugins menu, or manually:

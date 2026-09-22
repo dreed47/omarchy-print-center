@@ -6,6 +6,7 @@ import {
     parsePrinterNames, parseDeviceList, parseDefaultPrinter, parseUserDefault, effectiveDefault, schedulerRunning,
     parsePrinterOptions, printerCard,
     heldJobIds, parseLpq, assembleJobs, parseCompletedJobs,
+    parsePageLogTotals, zeroPageAlerts,
     worstSeverity, summaryLine, humanReason,
     assembleDiscovered, niceNameFromUri, buildAddScript, sanitizeQueueName,
     parseArgs,
@@ -154,12 +155,66 @@ test("parseCompletedJobs newest first", () => {
     assert.equal(done[0].state, "completed")
 })
 
+// Real page_log lines captured off David's box (2026-09-22): jobs 8-10
+// completed in CUPS's queue but printed 0 pages (a libcupsfilters 2.2.x
+// regression - OpenPrinting/libcupsfilters#246 - crashing pdftopdf on
+// certain PDFs), while jobs 6/7 from two weeks earlier printed fine.
+const PAGE_LOG =
+    "Canon-G4080-series david 6 [08/Sep/2026:16:26:23 -0400] total 1 - localhost print-center selftest - -\n" +
+    "Canon-G4080-series david 7 [08/Sep/2026:16:30:27 -0400] total 1 - localhost Print Center test page - -\n" +
+    "Canon-G4080-series david 8 [22/Sep/2026:12:36:37 -0400] total 0 - localhost Online Servicing App - Documents - -\n" +
+    "Canon-G4080-series david 9 [22/Sep/2026:12:37:01 -0400] total 0 - localhost Online Servicing App - Documents - -\n" +
+    "Canon-G4080-series david 10 [22/Sep/2026:12:55:59 -0400] total 0 - localhost Print Center test page - -\n"
+
+test("parsePageLogTotals: reads the real page_log 'total N' line shape", () => {
+    const totals = parsePageLogTotals(PAGE_LOG)
+    assert.equal(totals.get(7).pages, 1)
+    assert.equal(totals.get(10).pages, 0)
+    assert.equal(totals.get(10).printer, "Canon-G4080-series")
+    assert.equal(totals.size, 5)
+})
+
+test("parsePageLogTotals: garbage/empty input", () => {
+    assert.equal(parsePageLogTotals("").size, 0)
+    assert.equal(parsePageLogTotals(null).size, 0)
+    assert.equal(parsePageLogTotals("not a page_log line\n").size, 0)
+})
+
+test("zeroPageAlerts: flags the most recent zero-page job, one alert per printer", () => {
+    const totals = parsePageLogTotals(PAGE_LOG)
+    const recentCompleted = [
+        { idNum: 10, printer: "Canon-G4080-series", title: "Print Center test page" },
+        { idNum: 9, printer: "Canon-G4080-series", title: "Online Servicing App - Documents" },
+        { idNum: 7, printer: "Canon-G4080-series", title: "Print Center test page" },
+    ]
+    const alerts = zeroPageAlerts(recentCompleted, totals)
+    assert.equal(alerts.length, 1)   // job 9 also zero-page, but same printer as job 10 - not duplicated
+    assert.equal(alerts[0].printer, "Canon-G4080-series")
+    assert.equal(alerts[0].severity, "warn")
+    assert.match(alerts[0].text, /Print Center test page.*0 pages/)
+})
+
+test("zeroPageAlerts: a printer with only real completions gets no alert", () => {
+    const totals = parsePageLogTotals(PAGE_LOG)
+    const recentCompleted = [{ idNum: 7, printer: "Canon-G4080-series", title: "Print Center test page" }]
+    assert.deepEqual(zeroPageAlerts(recentCompleted, totals), [])
+})
+
+test("zeroPageAlerts: a completed job with no page_log entry at all is not flagged", () => {
+    const totals = parsePageLogTotals(PAGE_LOG)
+    const recentCompleted = [{ idNum: 999, printer: "Canon-G4080-series", title: "untracked" }]
+    assert.deepEqual(zeroPageAlerts(recentCompleted, totals), [])
+})
+
 test("worstSeverity", () => {
     assert.equal(worstSeverity([{ stateReasons: [], state: "idle" }], []), "ok")
     assert.equal(worstSeverity([{ stateReasons: ["toner-low"], state: "idle" }], []), "warn")
     assert.equal(worstSeverity([{ stateReasons: ["media-jam"], state: "stopped" }], []), "error")
     assert.equal(worstSeverity([{ stateReasons: [], state: "idle" }], [{ state: "held" }]), "warn")
     assert.equal(worstSeverity([{ stateReasons: ["cups-something-error"], state: "idle" }], []), "error")
+    // A zero-page-job alert lives on `.alerts` (attached by bin/print-center
+    // after printerAlerts() runs), not `.stateReasons` - must still surface.
+    assert.equal(worstSeverity([{ stateReasons: [], state: "idle", alerts: [{ severity: "warn" }] }], []), "warn")
 })
 
 test("summaryLine phrasing", () => {

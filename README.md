@@ -14,7 +14,12 @@ it.
 
 **Bar pill** — the tracked printer's state and the number of queued jobs. It
 turns your theme accent on a warning (paper low, ink low, paused) and urgent on
-an error (out of paper, jam, offline) or when the CUPS service is down.
+an error (out of paper, jam, offline) or when the CUPS service is down. Also
+flags a job that "completed" in CUPS's queue but actually printed 0 pages —
+CUPS's own `page_log` has the real page count even when the printer-side
+error that caused it clears again before the next poll (a real case: a
+[libcupsfilters regression](https://github.com/OpenPrinting/libcupsfilters/issues/246)
+that silently drops certain PDFs on some Arch-based systems as of 2026-09).
 
 **Popup**
 
